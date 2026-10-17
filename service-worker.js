@@ -34,12 +34,17 @@
    改版本号请用文本编辑器（VS Code、记事本都行）。
    ========================================================================== */
 
-const CACHE_VERSION = 'v2.4.1';
+const CACHE_VERSION = 'v3.0.0';
 const CACHE_NAME = `lifeassistant-${CACHE_VERSION}`;
 
 /**
  * 需要预缓存的程序文件（app shell）。
  * 路径都相对于 service-worker.js 所在目录（也就是 pwa/）。
+ *
+ * ⚠️ 新增文件时**必须**加进这个清单，否则：
+ *   - 第一次访问能加载（走网络）
+ *   - 但离线后再打开会因为缓存里没有而失败
+ * 表现是「联网能用、断网就白屏」，很难查。
  */
 const APP_SHELL = [
   './',
@@ -49,6 +54,7 @@ const APP_SHELL = [
   './css/tokens.css',
   './css/base.css',
   './css/components.css',
+  './css/settings.css',
 
   './js/app.js',
   './js/constants.js',
@@ -57,6 +63,8 @@ const APP_SHELL = [
   './js/schedule.js',
   './js/diet.js',
   './js/journal.js',
+  './js/ai.js',
+  './js/settings.js',
 
   './icons/icon-192.png',
   './icons/icon-512.png',
