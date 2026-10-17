@@ -243,14 +243,20 @@
             <!--
               两个按钮，分别对应「拍新照片」和「从相册选」。
 
-              为什么要拆成两个 input：
-                - capture="environment" 会让 iPhone 直接弹出相机界面，
-                  这时**没法选已有的照片**
-                - 不带 capture 的 input 会弹出「照片图库 / 拍照 / 浏览」的选择，
-                  但默认回到图库
+              ⚠️ 为什么用 <label for="..."> 而不是 <button> + JS 调用 click()
 
-              所以拆成两个隐藏的 input，用两个按钮分别触发，
-              用户想干什么就点哪个，不用再猜。
+              iOS Safari 对「JavaScript 合成出来的点击」限制很严：
+              `input.click()` 这种调用经常被直接忽略，
+              表现就是「点了按钮完全没反应」。
+
+              而 <label for="cameraInput"> 是浏览器**原生**支持的关联：
+              点 label 就等于点那个 input，不经过 JS，iOS 一定认。
+
+              这也是上个版本能用的原因 —— 那时整个区域就是一个铺满的
+              input，手指直接点在 input 上。改成按钮 + JS 之后反而坏了。
+
+              文件输入放在 .photo-upload-area **外面**，
+              避免被那条「铺满整个区域」的旧 CSS 规则影响。
             -->
             <div class="photo-upload-area" id="photoUploadArea">
               <div class="photo-upload-icon" aria-hidden="true">
@@ -260,22 +266,28 @@
               <div class="photo-upload-hint">照片只会保存在你的手机上</div>
 
               <div class="photo-buttons">
-                <button type="button" class="btn btn-primary btn-sm" id="takePhotoBtn">
+                <label class="btn btn-primary btn-sm" for="cameraInput">
                   <svg class="icon icon-sm" aria-hidden="true"><use href="#i-camera"/></svg>
                   拍照
-                </button>
-                <button type="button" class="btn btn-ghost btn-sm" id="pickPhotoBtn">
+                </label>
+                <label class="btn btn-ghost btn-sm" for="albumInput">
                   <svg class="icon icon-sm" aria-hidden="true"><use href="#i-image"/></svg>
                   从相册选择
-                </button>
+                </label>
               </div>
-
-              <!-- 隐藏的真实文件输入，由上面的按钮触发 -->
-              <input type="file" accept="image/*" capture="environment"
-                     id="cameraInput" class="visually-hidden" tabindex="-1" aria-hidden="true">
-              <input type="file" accept="image/*"
-                     id="albumInput" class="visually-hidden" tabindex="-1" aria-hidden="true">
             </div>
+
+            <!--
+              真实的文件输入。
+              capture="environment" 让 iPhone 直接调起后置摄像头；
+              不带 capture 的那个会打开相册。
+              用 .visually-hidden 而不是 display:none ——
+              某些浏览器会拒绝触发 display:none 的 input。
+            -->
+            <input type="file" accept="image/*" capture="environment"
+                   id="cameraInput" class="visually-hidden" tabindex="-1">
+            <input type="file" accept="image/*"
+                   id="albumInput" class="visually-hidden" tabindex="-1">
 
             <div class="photo-preview" id="photoPreview">
               <img id="photoPreviewImg" alt="食物照片预览">
