@@ -89,15 +89,17 @@ export function initDiet(dependencies) {
     renderWeekly();
   });
 
-  // ---- 照片：拍照 / 从相册选（两个独立的隐藏 input，由按钮触发）
-  // 为什么拆两个：iOS 上带 capture 的 input 只会弹相机，
-  // 不带 capture 的只会弹相册，一次点击没法两全。
-  $('#takePhotoBtn')?.addEventListener('click', () => {
-    $('#cameraInput')?.click();
-  });
-  $('#pickPhotoBtn')?.addEventListener('click', () => {
-    $('#albumInput')?.click();
-  });
+  // ---- 照片：拍照 / 从相册选
+  //
+  // ⚠️ 这里刻意**没有**给按钮绑 click 事件去调 input.click()。
+  //
+  // 原因：iOS Safari 会忽略 JS 合成的 input.click()，
+  // 表现为「点了按钮完全没反应」。
+  // 现在按钮是 <label for="cameraInput">，
+  // 浏览器原生就会把点击转给对应的 input，不需要也不应该再用 JS 触发
+  // （两个都做会导致弹两次选择框）。
+  //
+  // 我们只需要监听 input 的 change 事件，也就是「用户真的选好了文件」。
   $('#cameraInput')?.addEventListener('change', handlePhotoSelected);
   $('#albumInput')?.addEventListener('change', handlePhotoSelected);
   $('#photoRemoveBtn')?.addEventListener('click', clearPendingPhoto);
