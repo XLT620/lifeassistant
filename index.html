@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-app="lifeassistant">
+<head>
+<meta charset="UTF-8">
+
+<!--
+  ⚠️ viewport-fit=cover 是 iPhone 适配的关键。
+  没有它，刘海和底部 Home Indicator 会盖住内容；
+  有了它，CSS 里的 env(safe-area-inset-*) 才会生效。
+  maximum-scale 不设限 —— 限制缩放会影响无障碍。
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+<title>日程生活助手</title>
+<meta name="description" content="课程表、饮食记录与心得日记。数据全部保存在你的设备上。">
+
+<!-- ================================================================
+     PWA 清单
+     iOS Safari 从 16.4 起支持 web app manifest；
+     但为了兼容更老的 iOS，下面还额外保留了 apple-* 这一组标签。
+     ================================================================ -->
+<link rel="manifest" href="./manifest.webmanifest">
+
+<!-- 状态栏配色（会随明暗模式在 app.js 里动态更新） -->
+<meta name="theme-color" content="#4A7C6F">
+
+<!-- iOS 专用：让「添加到主屏幕」后以全屏 App 形式启动 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="日程助手">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+
+<!-- 普通浏览器标签页图标 -->
+<link rel="icon" href="./icons/favicon-32.png" sizes="32x32">
+<link rel="icon" href="./icons/icon-192.png" sizes="192x192">
+
+<!-- 禁用 iOS 自动识别电话号码（会把课表里的数字变成蓝色链接） -->
+<meta name="format-detection" content="telephone=no">
+
+<link rel="stylesheet" href="./css/tokens.css">
+<link rel="stylesheet" href="./css/base.css">
+<link rel="stylesheet" href="./css/components.css">
+</head>
+
+<body>
+
+<!--
+  图标符号定义。刻意**内联在页面里**而不是用外部 sprite.svg：
+  内联的 <symbol> 一定能被 <use> 引用到，不依赖额外的网络请求，
+  Service Worker 少缓存一个文件，离线时也更稳。
+
+  所有图标都是 stroke="currentColor" 的单色线性图形，
+  颜色由 CSS 的 color 决定，深浅色主题切换时自动跟随。
+-->
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true" focusable="false">
+  <symbol id="i-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 5.5A1.5 1.5 0 0 1 4.5 4H9a3 3 0 0 1 3 3v13a2.5 2.5 0 0 0-2.5-2.5H3z"/>
+    <path d="M21 5.5A1.5 1.5 0 0 0 19.5 4H15a3 3 0 0 0-3 3v13a2.5 2.5 0 0 1 2.5-2.5H21z"/>
+  </symbol>
+  <symbol id="i-fork-knife" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 3v6.5a2 2 0 0 0 4 0V3"/>
+    <path d="M9 11.5V21"/>
+    <path d="M17 3c-1.7 0-3 2-3 5.5S15.3 14 17 14h.5a2.5 2.5 0 0 1 2.5 2.5V21"/>
+  </symbol>
+  <symbol id="i-journal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="4" y="3" width="14" height="18" rx="2.5"/>
+    <path d="M18 3.5h1.5A1.5 1.5 0 0 1 21 5v14a1.5 1.5 0 0 1-1.5 1.5H18"/>
+    <path d="M8 8h6M8 12h6M8 16h3"/>
+  </symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3.2"/>
+    <path d="M12 2.5l1.2 2.2 2.5-.4.5 2.5 2.2 1.2-1.3 2.1 1.3 2.1-2.2 1.2-.5 2.5-2.5-.4L12 21.5l-1.2-2.2-2.5.4-.5-2.5-2.2-1.2 1.3-2.1-1.3-2.1 2.2-1.2.5-2.5 2.5.4z"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20.5 14.3A8.5 8.5 0 1 1 9.7 3.5a6.8 6.8 0 0 0 10.8 10.8z"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="4"/>
+    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>
+  </symbol>
+  <symbol id="i-camera" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 8h2.5l1.4-2.2A1.5 1.5 0 0 1 9.2 5h5.6a1.5 1.5 0 0 1 1.3.8L17.5 8H20a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 20 19H4a1.5 1.5 0 0 1-1.5-1.5v-8A1.5 1.5 0 0 1 4 8z"/>
+    <circle cx="12" cy="13" r="3.4"/>
+  </symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 9a6 6 0 1 1 12 0c0 4.5 1.5 5.8 2 6.5H4c.5-.7 2-2 2-6.5z"/>
+    <path d="M10.5 19a1.8 1.8 0 0 0 3 0"/>
+  </symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M15 5l-7 7 7 7"/>
+  </symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 5l7 7-7 7"/>
+  </symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3.5" y="5" width="17" height="15" rx="2.5"/>
+    <path d="M3.5 10h17M8 3v4M16 3v4"/>
+  </symbol>
+  <symbol id="i-list" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>
+  </symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 20h4l10-10a2.8 2.8 0 0 0-4-4L4 16v4z"/>
+  </symbol>
+</svg>
+
+<div class="app-shell">
+
+  <!-- ============================================================ 顶栏 -->
+  <header class="app-header">
+    <div class="app-header-row">
+      <div>
+        <div class="app-title">日程生活助手</div>
+        <div class="app-subtitle" id="headerDate"></div>
+      </div>
+      <div class="app-header-actions">
+        <button type="button" class="icon-btn" id="themeToggle" aria-label="切换深浅色">
+          <svg class="icon" aria-hidden="true"><use href="#i-moon"/></svg>
+        </button>
+        <button type="button" class="icon-btn" id="settingsButton" aria-label="设置">
+          <svg class="icon" aria-hidden="true"><use href="#i-gear"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 课前提醒横幅（只显示在课程表页） -->
+    <div class="reminder-banner" id="reminderBanner" role="status" aria-live="polite">
+      <svg class="icon icon-sm" aria-hidden="true"><use href="#i-bell"/></svg>
+      <span class="reminder-text" id="reminderText"></span>
+    </div>
+  </header>
+
+  <!-- ============================================================ 内容区 -->
+  <main class="app-main">
+    <div class="main-content">
+
+      <!-- 存储不可用时的警告（无痕模式） -->
+      <div class="card" id="storageWarning" hidden
+           style="background: var(--danger-light); color: var(--danger); font-size: 0.85rem;"></div>
+
+      <!-- ======================================================= 课程表 -->
+      <div class="tab-panel active" id="panel-schedule">
+
+        <div class="card">
+          <div class="card-title">
+            <svg class="icon" aria-hidden="true"><use href="#i-book"/></svg> 添加课程
+          </div>
+          <form id="courseForm" novalidate>
+            <div class="form-group">
+              <label class="form-label" for="courseName">课程名称</label>
+              <input class="form-input" id="courseName" name="name"
+                     placeholder="例：高等数学" autocomplete="off" required>
+            </div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label class="form-label" for="courseDay">星期</label>
+                <select class="form-select" id="courseDay" name="day">
+                  <option value="1">周一</option>
+                  <option value="2">周二</option>
+                  <option value="3">周三</option>
+                  <option value="4">周四</option>
+                  <option value="5">周五</option>
+                  <option value="6">周六</option>
+                  <option value="0">周日</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="courseStart">开始</label>
+                <input class="form-input" type="time" id="courseStart" name="start" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="courseEnd">结束</label>
+                <input class="form-input" type="time" id="courseEnd" name="end" required>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="courseLocation">上课地点（可选）</label>
+              <input class="form-input" id="courseLocation" name="location"
+                     placeholder="例：教学楼 A301" autocomplete="off">
+            </div>
+
+            <button class="btn btn-primary btn-block" type="submit">添加课程</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-title">
+            <svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg> 我的课程
+          </div>
+          <div class="day-filter" id="dayFilter" role="group" aria-label="按星期筛选"></div>
+          <div id="courseList"></div>
+        </div>
+
+      </div>
+
+      <!-- ======================================================= 饮食记录 -->
+      <div class="tab-panel" id="panel-diet">
+
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">
+              <svg class="icon" aria-hidden="true"><use href="#i-fork-knife"/></svg> 饮食记录
+            </div>
+            <div class="segmented" role="tablist" aria-label="视图切换">
+              <button type="button" class="segmented-btn active" data-view="daily"
+                      role="tab" aria-selected="true">日视图</button>
+              <button type="button" class="segmented-btn" data-view="weekly"
+                      role="tab" aria-selected="false">周历</button>
+            </div>
+          </div>
+
+          <!-- ---------------- 日视图 -->
+          <div id="dietDailyView">
+            <div class="diet-date-nav">
+              <button type="button" class="btn btn-ghost icon-only" id="dietPrev" aria-label="前一天">
+                <svg class="icon" aria-hidden="true"><use href="#i-chevron-left"/></svg>
+              </button>
+              <div class="diet-date-label" id="dietDateLabel"></div>
+              <button type="button" class="btn btn-ghost icon-only" id="dietNext" aria-label="后一天">
+                <svg class="icon" aria-hidden="true"><use href="#i-chevron-right"/></svg>
+              </button>
+            </div>
+
+            <!--
+              capture="environment" 让手机直接调起后置摄像头。
+              桌面上会退化成普通的文件选择框，不影响使用。
+            -->
+            <div class="photo-upload-area" id="photoUploadArea">
+              <input type="file" accept="image/*" capture="environment" id="photoFileInput"
+                     aria-label="拍照或选择食物照片">
+              <div class="photo-upload-icon" aria-hidden="true">
+                <svg class="icon" style="width:2em;height:2em"><use href="#i-camera"/></svg>
+              </div>
+              <div class="photo-upload-text">拍照或选择食物照片</div>
+              <div class="photo-upload-hint">照片只会保存在你的手机上</div>
+            </div>
+
+            <div class="photo-preview" id="photoPreview">
+              <img id="photoPreviewImg" alt="食物照片预览">
+              <button type="button" class="photo-preview-remove" id="photoRemoveBtn"
+                      aria-label="移除照片">✕</button>
+            </div>
+
+            <div class="photo-analyzing" id="photoAnalyzing" role="status" aria-live="polite">
+              <div class="photo-analyzing-spinner" aria-hidden="true"></div>
+              <span>正在处理…</span>
+            </div>
+
+            <div id="dietAutoAdd"></div>
+            <div id="dietContent"></div>
+          </div>
+
+          <!-- ---------------- 周历 -->
+          <div id="dietWeeklyView" hidden>
+            <div class="week-nav">
+              <button type="button" class="btn btn-ghost btn-sm" id="weekPrev">
+                <svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-left"/></svg> 上周
+              </button>
+              <div class="week-nav-label" id="weekLabel"></div>
+              <button type="button" class="btn btn-ghost btn-sm" id="weekNext">
+                下周 <svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-right"/></svg>
+              </button>
+            </div>
+            <div class="week-grid" id="weekGrid"></div>
+            <div class="week-stats" id="weekStats"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ======================================================= 心得日记 -->
+      <div class="tab-panel" id="panel-journal">
+
+        <div class="card">
+          <div class="card-title">
+            <svg class="icon" aria-hidden="true"><use href="#i-pencil"/></svg> 写下今日心得
+          </div>
+
+          <form id="journalForm">
+            <div class="form-group">
+              <span class="form-label" id="moodLabel">今天的心情</span>
+              <div class="mood-picker" id="moodPicker" role="group" aria-labelledby="moodLabel">
+                <button type="button" class="mood-option" data-mood="😊" aria-pressed="false" aria-label="开心">😊</button>
+                <button type="button" class="mood-option" data-mood="😌" aria-pressed="false" aria-label="平静">😌</button>
+                <button type="button" class="mood-option" data-mood="🤔" aria-pressed="false" aria-label="思考">🤔</button>
+                <button type="button" class="mood-option" data-mood="😤" aria-pressed="false" aria-label="烦躁">😤</button>
+                <button type="button" class="mood-option" data-mood="😢" aria-pressed="false" aria-label="难过">😢</button>
+                <button type="button" class="mood-option" data-mood="🎉" aria-pressed="false" aria-label="兴奋">🎉</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="form-label" for="journalText">心得与感受</label>
+              <textarea class="form-textarea" id="journalText" rows="4"
+                        placeholder="记录今天的所思所想…" required></textarea>
+            </div>
+
+            <button class="btn btn-primary btn-block" type="submit">记录心得</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <div class="card-title">
+              <svg class="icon" aria-hidden="true"><use href="#i-journal"/></svg> 心得时间线
+            </div>
+            <span class="badge" id="journalCount" hidden></span>
+          </div>
+          <div id="journalList"></div>
+        </div>
+
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ============================================================ 底部 Tab -->
+  <nav class="app-tabbar" role="tablist" aria-label="主导航">
+    <button type="button" class="tab-btn active" data-tab="schedule"
+            role="tab" aria-selected="true">
+      <svg class="icon tab-icon" aria-hidden="true"><use href="#i-book"/></svg>
+      <span>课程表</span>
+    </button>
+    <button type="button" class="tab-btn" data-tab="diet"
+            role="tab" aria-selected="false">
+      <svg class="icon tab-icon" aria-hidden="true"><use href="#i-fork-knife"/></svg>
+      <span>饮食</span>
+    </button>
+    <button type="button" class="tab-btn" data-tab="journal"
+            role="tab" aria-selected="false">
+      <svg class="icon tab-icon" aria-hidden="true"><use href="#i-journal"/></svg>
+      <span>日记</span>
+    </button>
+  </nav>
+
+</div>
+
+<!-- ============================================================== Toast -->
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- ============================================================== 撤销条 -->
+<div class="undo-bar" id="undoBar" role="status" aria-live="polite">
+  <span class="undo-text" id="undoText"></span>
+  <button type="button" class="undo-btn" id="undoBtn">撤销</button>
+</div>
+
+<!-- ============================================================== 食物详情 -->
+<div class="modal-overlay" id="foodDetailModal" role="dialog" aria-modal="true"
+     aria-labelledby="foodDetailName">
+  <div class="food-detail-box">
+    <img class="food-detail-photo" id="foodDetailPhoto" alt="食物照片">
+    <div class="food-detail-body">
+      <div class="food-detail-name" id="foodDetailName"></div>
+      <div class="food-detail-row">
+        <span class="food-detail-label">餐次</span>
+        <span class="food-detail-value" id="foodDetailMeal"></span>
+      </div>
+      <div class="food-detail-row">
+        <span class="food-detail-label">热量</span>
+        <span class="food-detail-value" id="foodDetailCal"></span>
+      </div>
+      <div class="food-detail-row">
+        <span class="food-detail-label">金额</span>
+        <span class="food-detail-value" id="foodDetailCost"></span>
+      </div>
+      <div class="food-detail-row">
+        <span class="food-detail-label">日期</span>
+        <span class="food-detail-value" id="foodDetailDate"></span>
+      </div>
+    </div>
+    <div class="food-detail-actions">
+      <button type="button" class="btn btn-danger" id="foodDetailDelete">删除</button>
+      <button type="button" class="btn btn-ghost" id="foodDetailClose">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!--
+  type="module" 是必须的：这样 js 文件里才能用 import / export。
+  副作用是**不能再用 file:// 直接打开**（浏览器会因 CORS 拒绝加载模块），
+  必须通过本地服务器或 HTTPS 访问。测试方法见 README。
+-->
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>

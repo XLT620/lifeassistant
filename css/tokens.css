@@ -1,0 +1,144 @@
+/* ==========================================================================
+   设计令牌
+   --------------------------------------------------------------------------
+   变量名沿用原型的 `--primary` / `--bg` / `--card` 等，
+   这样 diet.js / schedule.js 里的样式引用一行都不用改，也不会出现视觉回归。
+
+   改动只有两处，都是为了 iPhone 体验：
+     1. 每个颜色补一套深色值（原型完全没有深色模式）
+     2. 深色模式通过 <html data-theme="dark"> 显式开启；
+        未显式选择时，由下面的 prefers-color-scheme 跟随系统
+
+   色值与 ios/LifeAssistant/Core/DesignSystem/Theme.swift 一一对应 ——
+   改这里请同步改那边（或至少知道两个版本会不一致）。
+   ========================================================================== */
+
+:root,
+:root[data-theme="light"] {
+  /* ---- 品牌色 ---- */
+  --primary: #4A7C6F;
+  --primary-light: #6BA396;
+  --primary-dark: #3A6259;
+  --accent: #E8985E;
+  --accent-light: #F2B888;
+
+  /* ---- 背景与表面 ---- */
+  --bg: #F7F3EE;
+  --card: #FFFFFF;
+  --surface-alt: #FAFAF7;
+
+  /* ---- 文字 ---- */
+  --text: #2D3436;
+  --text-secondary: #636E72;
+  --text-on-primary: #FFFFFF;
+
+  /* ---- 线与强调 ---- */
+  --border: #E0D8CF;
+  --danger: #D94F4F;
+  --danger-light: #F8D7D7;
+  --success: #4A7C6F;
+  --success-light: #D4EDE5;
+
+  /* ---- 阴影 ---- */
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --shadow-strong: 0 8px 30px rgba(0, 0, 0, 0.15);
+
+  /* ---- 圆角 ---- */
+  --radius: 12px;
+  --radius-sm: 8px;
+  --radius-card: 16px;
+
+  /* ---- 间距 ---- */
+  --space-xxs: 2px;
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-m: 12px;
+  --space-md: 16px;
+  --space-lg: 20px;
+  --space-xl: 24px;
+
+  /* ---- 无障碍：最小点击区 ---- */
+  --tap-target: 44px;
+
+  /* ---- 安全区（iPhone 刘海 / 圆角 / 底部横条） ---- */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+
+  /* ---- 顶部渐变（原型的 header 用它） ---- */
+  --header-gradient: linear-gradient(135deg, var(--primary), var(--primary-light));
+  --header-shadow: 0 2px 8px rgba(74, 124, 111, 0.2);
+
+  color-scheme: light;
+}
+
+/* ==========================================================================
+   深色模式
+   --------------------------------------------------------------------------
+   深色下绿色不能直接沿用（#4A7C6F 在深背景上太暗、看不清），
+   统一往亮的方向调一档；橙色反之。
+   ========================================================================== */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --primary: #6BA396;
+    --primary-light: #8FC4B7;
+    --primary-dark: #4A7C6F;
+    --accent: #F2B888;
+    --accent-light: #E8985E;
+
+    --bg: #14100D;
+    --card: #1F1A16;
+    --surface-alt: #262019;
+
+    --text: #F2EEE9;
+    --text-secondary: #A8A29B;
+    --text-on-primary: #0F1412;
+
+    --border: #3A322B;
+    --danger: #FF7A7A;
+    --danger-light: #4A2626;
+    --success: #6BA396;
+    --success-light: #1E352F;
+
+    --shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+    --shadow-strong: 0 8px 30px rgba(0, 0, 0, 0.55);
+
+    --header-gradient: linear-gradient(135deg, #3A6259, #4A7C6F);
+    --header-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+
+    color-scheme: dark;
+  }
+}
+
+/* 用户手动选了深色（覆盖系统设置） */
+:root[data-theme="dark"] {
+  --primary: #6BA396;
+  --primary-light: #8FC4B7;
+  --primary-dark: #4A7C6F;
+  --accent: #F2B888;
+  --accent-light: #E8985E;
+
+  --bg: #14100D;
+  --card: #1F1A16;
+  --surface-alt: #262019;
+
+  --text: #F2EEE9;
+  --text-secondary: #A8A29B;
+  --text-on-primary: #0F1412;
+
+  --border: #3A322B;
+  --danger: #FF7A7A;
+  --danger-light: #4A2626;
+  --success: #6BA396;
+  --success-light: #1E352F;
+
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  --shadow-strong: 0 8px 30px rgba(0, 0, 0, 0.55);
+
+  --header-gradient: linear-gradient(135deg, #3A6259, #4A7C6F);
+  --header-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+
+  color-scheme: dark;
+}

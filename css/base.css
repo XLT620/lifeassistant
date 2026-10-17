@@ -1,0 +1,321 @@
+/* ==========================================================================
+   基础层：重置、排版、页面骨架、安全区
+   --------------------------------------------------------------------------
+   与原型的三处结构性差异（都是为了"在 iPhone 上像 App"）：
+
+   1. **Tab 栏从顶部移到底部**。原型把三个 Tab 放在顶部（像网页），
+      底部 Tab 是 iOS 的惯例，拇指够得到，也让「添加到主屏幕」后
+      更像原生 App。为此顶部只留标题，中间是可滚动内容区，
+      底部是固定的 Tab 栏。
+
+   2. **真正的安全区适配**。原型的 viewport 没有 viewport-fit=cover，
+      而且只在 body 上加了 padding-bottom。iPhone 的刘海（顶部）
+      和底部横条（Home Indicator）都会盖住内容。现在三个方向都处理了。
+
+   3. **滚动容器是内容区，不是 body**。这样顶部标题和底部 Tab 栏
+      都不随内容滚动 —— 这是 App 的手感，而不是网页的手感。
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  /* 防止 iOS 横屏时自动放大字号 */
+  -webkit-text-size-adjust: 100%;
+  height: 100%;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  height: 100%;
+  overflow: hidden;              /* 滚动交给 .app-main */
+  /* 禁止长按选中文字/弹出菜单 —— App 手感 */
+  -webkit-user-select: none;
+  user-select: none;
+  /* 去掉点击时的灰色高亮块 */
+  -webkit-tap-highlight-color: transparent;
+  /* 让字体更平滑（iOS） */
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 输入类元素必须允许选中与键盘输入 */
+input,
+textarea,
+select {
+  -webkit-user-select: text;
+  user-select: text;
+  font-family: inherit;
+  font-size: 1rem;               /* < 16px 会让 iOS 聚焦时自动放大页面 */
+  color: var(--text);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+/* iOS 上双击才会缩放，这里允许内容的默认行为但对按钮禁用 */
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+}
+
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   页面骨架：三个固定区域（顶栏 / 滚动内容 / 底部 Tab）
+   ========================================================================== */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* 顶部刘海 + 左右圆角安全区 */
+  padding-top: var(--safe-top);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+}
+
+/* ---------------- 顶栏 ---------------- */
+
+.app-header {
+  flex: none;
+  background: var(--header-gradient);
+  color: #fff;
+  padding: var(--space-lg) var(--space-md) var(--space-m);
+  box-shadow: var(--header-shadow);
+  position: relative;
+  z-index: 10;
+}
+
+.app-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-sm);
+}
+
+.app-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.app-subtitle {
+  font-size: 0.8rem;
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
+/* 右上角的图标按钮（设置、主题切换） */
+.app-header-actions {
+  display: flex;
+  gap: var(--space-xs);
+  flex: none;
+}
+
+.icon-btn {
+  width: var(--tap-target);
+  height: var(--tap-target);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 1.15rem;
+  color: #fff;
+  transition: background-color 0.15s;
+}
+
+.icon-btn:active {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* 课前提醒横幅 */
+.reminder-banner {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  margin-top: var(--space-m);
+  font-size: 0.85rem;
+  display: none;
+  align-items: center;
+  gap: var(--space-sm);
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.reminder-banner.active {
+  display: flex;
+}
+
+/* 即将上课（N 分钟内）：用暖色底强调，比普通提示更醒目。
+   用 data-level 属性而不是内联样式，这样深色模式能一起管。 */
+.reminder-banner[data-level="urgent"] {
+  background: rgba(232, 152, 94, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  font-weight: 600;
+}
+
+.reminder-icon {
+  font-size: 1.1rem;
+  flex-shrink: 0;
+}
+
+.reminder-text {
+  flex: 1;
+}
+
+/* ---------------- 可滚动的中间内容区 ---------------- */
+
+.app-main {
+  flex: 1 1 auto;
+  min-height: 0;                 /* flex 子项能收缩的必要条件 */
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain; /* 防止滚到底部时带动整页回弹 */
+  padding: var(--space-md);
+  /* 给底部 Tab 栏留出空间，避免最后一张卡片被遮住 */
+  padding-bottom: calc(var(--space-xl) + 64px + var(--safe-bottom));
+}
+
+.main-content {
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Tab 面板：默认隐藏，激活时显示 */
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+/* ---------------- 底部 Tab 栏 ---------------- */
+
+.app-tabbar {
+  flex: none;
+  display: flex;
+  background: var(--card);
+  border-top: 1px solid var(--border);
+  /* 底部 Home Indicator 安全区 */
+  padding-bottom: var(--safe-bottom);
+  position: relative;
+  z-index: 10;
+}
+
+.tab-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  /* 触摸目标高度必须 >= 44px，iOS 无障碍要求 */
+  min-height: var(--tap-target);
+  padding: 8px 0 6px;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  line-height: 1.2;
+  transition: color 0.15s;
+}
+
+.tab-btn .tab-icon {
+  font-size: 1.3rem;
+  line-height: 1;
+}
+
+.tab-btn.active {
+  color: var(--primary);
+  font-weight: 600;
+}
+
+.tab-btn:active {
+  opacity: 0.6;
+}
+
+/* ==========================================================================
+   响应式：屏幕较宽时（iPad / 桌面浏览器）收窄内容并居中
+   ========================================================================== */
+
+@media (min-width: 768px) {
+  .app-main {
+    padding: var(--space-xl);
+    padding-bottom: calc(var(--space-xl) + 64px);
+  }
+
+  .app-header {
+    padding: var(--space-xl) var(--space-xl) var(--space-m);
+  }
+}
+
+/* 屏幕很窄时（iPhone SE / 小屏）压缩间距 */
+@media (max-width: 390px) {
+  .app-main {
+    padding: var(--space-m) var(--space-sm);
+  }
+
+  .app-header {
+    padding: var(--space-md) var(--space-sm) var(--space-sm);
+  }
+}
+
+/* ==========================================================================
+   降低动画偏好（系统设置里的「减弱动态效果」）
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ==========================================================================
+   工具类
+   ========================================================================== */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+[hidden] {
+  display: none !important;
+}

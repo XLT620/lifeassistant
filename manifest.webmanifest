@@ -1,0 +1,58 @@
+{
+  "name": "日程生活助手",
+  "short_name": "日程助手",
+  "description": "课程表、饮食记录与心得日记。数据全部保存在你的设备上，不上传服务器。",
+  "lang": "zh-CN",
+  "dir": "ltr",
+
+  "start_url": "./index.html",
+  "scope": "./",
+  "id": "/lifeassistant-pwa/",
+
+  "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
+
+  "background_color": "#F7F3EE",
+  "theme_color": "#4A7C6F",
+
+  "categories": ["productivity", "education", "lifestyle"],
+
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+
+  "shortcuts": [
+    {
+      "name": "记录饮食",
+      "short_name": "记饮食",
+      "description": "直接打开饮食记录",
+      "url": "./index.html?tab=diet",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "写心得",
+      "short_name": "写日记",
+      "description": "直接打开心得日记",
+      "url": "./index.html?tab=journal",
+      "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
