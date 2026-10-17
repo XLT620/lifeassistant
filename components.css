@@ -1,0 +1,1118 @@
+/* ==========================================================================
+   组件层：卡片、按钮、表单、列表、周历、弹窗、Toast、撤销条
+   --------------------------------------------------------------------------
+   类名与原型保持一致（.card / .btn / .diet-item / .week-grid …），
+   这样移植 diet.js / schedule.js 时逻辑改动最小。
+
+   写深色模式时补了三处原型在深色下会出问题的地方，都标了 [深色修正]：
+     - 硬编码的 #FAFAF7 / #f5f0ea 等浅灰底色 → 改用变量
+     - 白色卡片上的白色文字 → 用 --text-on-primary
+     - 阴影在深色下看不见 → 走 --shadow 变量
+   ========================================================================== */
+
+/* ================================================================ 图标 */
+
+/*
+  单色线性 SVG 图标。颜色走 currentColor，所以它会继承父元素的 color，
+  深浅色主题切换时自动跟随，不需要写两套。
+
+  尺寸用 em 而不是 px：这样图标会跟着字号缩放，
+  用户在系统里调大字体时图标也会一起变大（无障碍）。
+*/
+.icon {
+  width: 1.35em;
+  height: 1.35em;
+  flex: none;
+  display: block;
+}
+
+.icon-sm {
+  width: 1.05em;
+  height: 1.05em;
+}
+
+/* 卡片标题里的小图标 */
+.card-title .icon {
+  width: 1.2em;
+  height: 1.2em;
+  color: var(--primary);
+}
+
+/* 底部 Tab 栏的图标稍大一些 */
+.tab-btn .icon {
+  width: 1.5em;
+  height: 1.5em;
+}
+
+/* 顶栏图标按钮里的图标 */
+.icon-btn .icon {
+  width: 1.25em;
+  height: 1.25em;
+}
+
+/* 提醒横幅里的铃铛 */
+.reminder-banner .icon {
+  color: #fff;
+}
+
+/* 只有图标没有文字的按钮（日期左右箭头） */
+.btn.icon-only {
+  padding: 8px;
+  min-width: var(--tap-target);
+  color: var(--primary);
+}
+
+.btn.icon-only:disabled {
+  color: var(--text-secondary);
+}
+
+/* ================================================================ 卡片 */
+
+.card {
+  background: var(--card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-md);
+}
+
+.card:last-child {
+  margin-bottom: 0;
+}
+
+.card-title {
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: var(--space-m);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.card-title-icon {
+  font-size: 1.2rem;
+}
+
+/* 卡片标题行：标题在左、操作在右（如饮食页的「日视图/周历」切换） */
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-m);
+}
+
+.card-head .card-title {
+  margin-bottom: 0;
+  /* 允许标题收缩，这样分段控件不会被挤到换行 */
+  min-width: 0;
+}
+
+.card-head .card-title .icon {
+  flex: none;
+}
+
+/* ================================================================ 按钮 */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s, transform 0.1s, opacity 0.15s;
+  /* iOS 无障碍：触摸目标不小于 44×44 */
+  min-height: var(--tap-target);
+  min-width: var(--tap-target);
+  text-align: center;
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--text-on-primary);
+}
+
+.btn-primary:not(:disabled):active {
+  background: var(--primary-dark);
+}
+
+.btn-danger {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 6px 10px;
+}
+
+.btn-ghost:active {
+  background: var(--surface-alt);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+/* 小号按钮（列表里的「编辑」这类） */
+.btn-sm {
+  font-size: 0.85rem;
+  padding: 6px 12px;
+  min-height: 36px;
+  min-width: 36px;
+}
+
+/* ================================================================ 表单 */
+
+.form-group {
+  margin-bottom: var(--space-m);
+}
+
+.form-group:last-child {
+  margin-bottom: 0;
+}
+
+.form-label {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.form-input,
+.form-select,
+.form-textarea {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 1rem;
+  color: var(--text);
+  background: var(--card);
+  transition: border-color 0.15s, box-shadow 0.15s;
+  font-family: inherit;
+  /* 触摸目标高度 */
+  min-height: var(--tap-target);
+}
+
+.form-input:focus,
+.form-select:focus,
+.form-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(74, 124, 111, 0.14);
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 96px;
+  line-height: 1.6;
+}
+
+.form-row {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+.form-row .form-group {
+  flex: 1;
+  min-width: 0;
+}
+
+.form-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* ================================================================ 分段控件 */
+
+.segmented {
+  display: flex;
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
+  padding: 3px;
+  gap: 3px;
+  /* 不被标题挤压 */
+  flex: none;
+}
+
+.segmented-btn {
+  /* 关键：不加 nowrap 时「日视图」会在 393px 宽的 iPhone 上折成两行 */
+  white-space: nowrap;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  transition: background-color 0.15s, color 0.15s;
+  min-height: 40px;
+}
+
+.segmented-btn.active {
+  background: var(--card);
+  color: var(--primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* ================================================================ 星期筛选 */
+
+/*
+  8 个胶囊（全部 + 周一~周日）在 393px 宽的 iPhone 上一行放不下，
+  所以这里必须横向滚动。
+
+  但单纯隐藏滚动条会让人以为「最后一个被切掉了」，而不是「可以滑动」。
+  用 mask-image 做一个右侧渐隐，明确表示「右边还有内容」。
+  这个技巧兼容性比 ::after 遮罩好（不受 flex 布局影响、不需要额外元素）。
+*/
+.day-filter {
+  display: flex;
+  gap: var(--space-xs);
+  overflow-x: auto;
+  padding-bottom: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  /* 隐藏滚动条（iOS 上本来也是滚动时才短暂显示） */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  /* 惯性滚动，手感更接近原生 */
+  -webkit-overflow-scrolling: touch;
+  /* 右侧渐隐：暗示「可以右滑看更多」 */
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent 100%);
+}
+
+.day-filter::-webkit-scrollbar {
+  display: none;
+}
+
+/* 内容不够长（宽屏）时不该出现渐隐 */
+@media (min-width: 480px) {
+  .day-filter {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
+.day-chip {
+  /* 比原来的 14px 收紧一点，让 8 个更容易看到大部分 */
+  flex: none;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface-alt);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  min-height: 36px;
+  white-space: nowrap;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.day-chip.active {
+  background: var(--primary);
+  color: var(--text-on-primary);
+}
+
+/* ================================================================ 课程列表 */
+
+.course-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-m);
+  padding: var(--space-m) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.course-item:last-child {
+  border-bottom: none;
+}
+
+.course-time-block {
+  text-align: center;
+  min-width: 56px;
+  flex-shrink: 0;
+  background: var(--success-light);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+}
+
+.course-time-start {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--primary-dark);
+}
+
+.course-time-end {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.course-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.course-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 2px;
+  word-break: break-word;
+}
+
+.course-location {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.course-weekday {
+  font-size: 0.75rem;
+  color: var(--primary);
+  background: var(--success-light);
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 10px;
+  margin-top: 4px;
+}
+
+.course-actions {
+  flex-shrink: 0;
+  display: flex;
+  gap: 2px;
+}
+
+/* ================================================================ 饮食记录 */
+
+.diet-date-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-m);
+}
+
+.diet-date-label {
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  flex: 1;
+}
+
+.diet-meal-header {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--primary);
+  margin-bottom: var(--space-sm);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.diet-meal-section {
+  margin-bottom: var(--space-lg);
+}
+
+.diet-meal-section:last-child {
+  margin-bottom: 0;
+}
+
+.diet-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-m);
+  background: var(--surface-alt);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background-color 0.15s;
+}
+
+.diet-item:active {
+  background: var(--success-light);
+}
+
+.diet-item-photo {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.diet-item-photo-placeholder {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  background: var(--success-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.diet-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.diet-item-name {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diet-item-meta {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.diet-item-cal {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.diet-item-cost {
+  color: var(--primary);
+}
+
+.diet-item-del {
+  flex-shrink: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 4px 6px;
+  min-width: 36px;
+  min-height: 36px;
+  opacity: 0.6;
+  transition: opacity 0.15s;
+  border-radius: 6px;
+}
+
+.diet-item-del:active {
+  opacity: 1;
+  background: var(--danger-light);
+}
+
+.diet-add-row {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.diet-add-row .form-input {
+  flex: 1 1 100%;
+}
+
+.diet-add-row .form-input.sm-input {
+  flex: 1 1 80px;
+  max-width: 110px;
+}
+
+.diet-add-row .form-select.sm-input {
+  flex: 0 1 auto;
+  max-width: 110px;
+}
+
+/* 日汇总 / 周汇总 */
+.daily-summary,
+.week-stats {
+  display: flex;
+  justify-content: space-around;
+  padding: var(--space-m) 0 0;
+  border-top: 1.5px solid var(--border);
+  margin-top: var(--space-m);
+  gap: var(--space-sm);
+}
+
+.week-stats {
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+
+.summary-item {
+  text-align: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.summary-value {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--primary-dark);
+  font-variant-numeric: tabular-nums;
+}
+
+.summary-label {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+/* ================================================================ 照片上传 */
+
+.photo-upload-area {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-card);
+  padding: var(--space-md);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+  margin-bottom: var(--space-m);
+  position: relative;
+  min-height: 120px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-upload-area:active {
+  border-color: var(--primary-light);
+  background: var(--success-light);
+}
+
+.photo-upload-icon {
+  font-size: 2rem;
+  margin-bottom: 6px;
+}
+
+.photo-upload-text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.photo-upload-hint {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  opacity: 0.75;
+  margin-top: 4px;
+}
+
+/* 文件输入铺满整个区域，这样点哪儿都能唤起相机 */
+.photo-upload-area input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+.photo-preview {
+  display: none;
+  margin-bottom: var(--space-m);
+  position: relative;
+}
+
+.photo-preview.show {
+  display: block;
+}
+
+.photo-preview img {
+  width: 100%;
+  max-height: 260px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.photo-preview-remove {
+  position: absolute;
+  top: var(--space-sm);
+  right: var(--space-sm);
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.photo-analyzing {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-m);
+  font-size: 0.85rem;
+  color: var(--primary);
+}
+
+.photo-analyzing.active {
+  display: flex;
+}
+
+.photo-analyzing-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid var(--success-light);
+  border-top-color: var(--primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex: none;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ================================================================ 周历 */
+
+.week-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-m);
+}
+
+.week-nav-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-align: center;
+  flex: 1;
+}
+
+.week-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+}
+
+.week-day-cell {
+  text-align: center;
+  padding: var(--space-sm) 2px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+  min-height: 76px;
+  background: var(--surface-alt);
+  border: 1.5px solid transparent;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.week-day-cell:active {
+  border-color: var(--primary-light);
+}
+
+.week-day-cell.today {
+  background: var(--success-light);
+  border-color: var(--primary);
+}
+
+/* [深色修正] 禁止翻到未来时置灰 */
+.week-day-cell.future {
+  opacity: 0.4;
+}
+
+.week-day-name {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+}
+
+.week-day-date {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.week-day-photos {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+  flex-wrap: wrap;
+  min-height: 24px;
+  align-items: center;
+}
+
+.week-day-photo-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.week-day-photo-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+.week-day-cal {
+  font-size: 0.62rem;
+  color: var(--accent);
+  font-weight: 500;
+  line-height: 1.2;
+}
+
+/* 超标的日子标红 */
+.week-day-cal.over {
+  color: var(--danger);
+}
+
+/* ================================================================ 心情选择 */
+
+.mood-picker {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.mood-option {
+  font-size: 1.5rem;
+  cursor: pointer;
+  opacity: 0.4;
+  transition: opacity 0.15s, background-color 0.15s, transform 0.1s;
+  /* iOS 无障碍最小触摸区 */
+  min-width: var(--tap-target);
+  min-height: var(--tap-target);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  border-radius: var(--radius-sm);
+}
+
+.mood-option:active {
+  transform: scale(0.94);
+}
+
+.mood-option.selected {
+  opacity: 1;
+  background: var(--success-light);
+}
+
+/* ================================================================ 日记 */
+
+.journal-entry {
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.journal-entry:last-child {
+  border-bottom: none;
+}
+
+.journal-date {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.journal-mood {
+  font-size: 1rem;
+}
+
+.journal-text {
+  font-size: 0.9rem;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.journal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+/* ================================================================ 空状态 */
+
+.empty-state {
+  text-align: center;
+  padding: var(--space-xl) var(--space-md);
+  color: var(--text-secondary);
+}
+
+.empty-icon {
+  font-size: 2.5rem;
+  margin-bottom: var(--space-sm);
+}
+
+.empty-text {
+  font-size: 0.9rem;
+}
+
+/* ================================================================ Toast */
+
+.toast {
+  position: fixed;
+  bottom: calc(80px + var(--safe-bottom));
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--text);
+  color: var(--bg);
+  padding: 10px 24px;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  opacity: 0;
+  transition: opacity 0.25s, transform 0.25s;
+  z-index: 400;
+  pointer-events: none;
+  max-width: calc(100vw - 32px);
+  text-align: center;
+  box-shadow: var(--shadow-strong);
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ================================================================ 撤销条 */
+
+/* 新增：替代原型的「确认弹窗」删除流程 —— 直接删 + 5 秒内可撤销 */
+.undo-bar {
+  position: fixed;
+  bottom: calc(var(--space-md) + var(--safe-bottom));
+  left: var(--space-md);
+  right: var(--space-md);
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-m);
+  padding: var(--space-m) var(--space-md);
+  background: var(--text);
+  color: var(--bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-strong);
+  z-index: 390;
+  transform: translateY(140%);
+  transition: transform 0.28s cubic-bezier(0.34, 1.3, 0.64, 1);
+}
+
+.undo-bar.show {
+  transform: translateY(0);
+}
+
+.undo-text {
+  flex: 1;
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.undo-btn {
+  flex: none;
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  min-height: 36px;
+}
+
+/* ================================================================ 弹窗 */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 500;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.modal-overlay.show {
+  display: flex;
+}
+
+.modal-box {
+  background: var(--card);
+  border-radius: var(--radius-card);
+  padding: var(--space-xl) var(--space-lg) var(--space-lg);
+  max-width: 360px;
+  width: 100%;
+  text-align: center;
+  box-shadow: var(--shadow-strong);
+  animation: modalIn 0.22s ease;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.modal-msg {
+  font-size: 0.95rem;
+  margin-bottom: var(--space-lg);
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  gap: var(--space-sm);
+  justify-content: center;
+}
+
+/* ================================================================ 食物详情 */
+
+.food-detail-box {
+  background: var(--card);
+  border-radius: var(--radius-card);
+  max-width: 380px;
+  width: 100%;
+  overflow: hidden;
+  box-shadow: var(--shadow-strong);
+  animation: modalIn 0.22s ease;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.food-detail-photo {
+  width: 100%;
+  max-height: 240px;
+  object-fit: cover;
+  display: block;
+  flex: none;
+  background: var(--surface-alt);
+}
+
+.food-detail-body {
+  padding: var(--space-lg);
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.food-detail-name {
+  font-size: 1.1rem;
+  font-weight: 700;
+  margin-bottom: var(--space-m);
+  color: var(--text);
+}
+
+.food-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+  padding: var(--space-sm) 0;
+  font-size: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.food-detail-row:last-child {
+  border-bottom: none;
+}
+
+.food-detail-label {
+  color: var(--text-secondary);
+  flex: none;
+}
+
+.food-detail-value {
+  font-weight: 500;
+  text-align: right;
+  word-break: break-word;
+}
+
+.food-detail-actions {
+  padding: var(--space-m) var(--space-lg) var(--space-lg);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  flex: none;
+  border-top: 1px solid var(--border);
+}
+
+/* ================================================================ 徽章 */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.68rem;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--success-light);
+  color: var(--primary);
+  white-space: nowrap;
+}
+
+.badge.accent {
+  /* 不用 color-mix()：它在 iOS 16.2 以下不支持，会让整条声明失效。
+     用预混好的实色更稳（accent-light 的浅色底在明暗两套里都已定义）。 */
+  background: var(--accent-light);
+  color: var(--primary-dark);
+}
+
+:root[data-theme="dark"] .badge.accent {
+  color: var(--bg);
+}
+
+.badge.danger {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+/* ================================================================ 信息行 */
+
+.info-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-md);
+  font-size: 0.85rem;
+  padding: 4px 0;
+}
+
+.info-row .info-label {
+  color: var(--text-secondary);
+}
+
+.info-row .info-value {
+  font-weight: 500;
+  text-align: right;
+}
