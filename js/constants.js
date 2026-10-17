@@ -84,12 +84,53 @@ export const FOOD_DB = [
 
 /**
  * 设置项的默认值。
- * 注意 apiKey 默认空字符串 —— 绝不在代码里写死任何 Key。
+ *
+ * ⚠️ apiKey 默认是空字符串 —— **绝不在代码里写死任何 Key**。
+ * Key 只能由用户自己在设置页里填入，存在他自己的设备上。
  */
 export const DEFAULT_SETTINGS = {
+  /* ---- AI 识别 ---- */
+
+  /** 用户是否已同意「把照片发给 AI」。默认 false，必须用户主动打开 */
+  aiConsent: false,
+
+  /**
+   * 连接方式：
+   *   'direct' = 直连 DeepSeek，用我自己的 Key  ← 默认
+   *   'proxy'  = 走管理员搭的代理（朋友不用自己申请 Key）
+   *
+   * 为什么默认 direct：它不需要任何人先部署服务器，装上就能用。
+   * 代理模式需要先部署 Cloudflare Worker，属于"进阶"选项。
+   */
+  aiMode: 'direct',
+
+  /** 代理模式的服务器地址（形如 https://xxx.workers.dev） */
+  proxyUrl: '',
+
+  /** 代理模式的访问口令（管理员给的） */
+  proxyCode: '',
+
+  /** 直连模式用的 Key（只存在本机） */
   apiKey: '',
-  aiConsent: false,        // 是否同意把照片发给 AI（默认 false）
-  dailyCalorieGoal: 2000,  // 0 = 不设目标
-  reminderMinutes: 30,     // 课前多少分钟在页面内提示
-  theme: 'auto',           // 'auto' | 'light' | 'dark'
+
+  /** 直连模式用的接口地址，一般不用改 */
+  apiUrl: 'https://api.deepseek.com/chat/completions',
+
+  /**
+   * 省流量模式。
+   * 打开后图片会以 detail:"low" 发送（服务端缩到 512×512），
+   * token 消耗少很多，识别精度略降，但对「这是碗面」这种判断够用。
+   */
+  saveData: false,
+
+  /* ---- 其他 ---- */
+
+  /** 每日热量目标。0 = 不设目标 */
+  dailyCalorieGoal: 2000,
+
+  /** 课前多少分钟在页面内提示 */
+  reminderMinutes: 30,
+
+  /** 界面主题：'auto' | 'light' | 'dark' */
+  theme: 'auto',
 };

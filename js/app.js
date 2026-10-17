@@ -21,6 +21,7 @@ import * as store from './store.js';
 import { initSchedule, renderCourses, checkReminder } from './schedule.js';
 import { initDiet, renderDiet, renderWeekly, getDietViewMode } from './diet.js';
 import { initJournal, renderJournal } from './journal.js';
+import { initSettings, openSettings } from './settings.js';
 
 /* ==================================================================== 反馈 */
 
@@ -195,24 +196,37 @@ function initTheme() {
 
 /* ==================================================================== Tab */
 
+/**
+ * 底部 Tab 栏的三个页面。
+ * 设置页（settings）不在这个数组里 —— 它不是 Tab，是从顶栏齿轮进入的子页面，
+ * 所以进入设置时底部 Tab 不高亮任何一个，避免"我在哪一页"的困惑。
+ */
 const TABS = ['schedule', 'diet', 'journal'];
+
+/** 当前显示的页面，可能是 TABS 里的一个，也可能是 'settings' */
 let activeTab = 'schedule';
 
 function switchTab(name, { scrollTop = true } = {}) {
-  if (!TABS.includes(name)) name = 'schedule';
+  const isSettings = name === 'settings';
+
+  // 未知名字一律回到课程表（防御性）
+  if (!isSettings && !TABS.includes(name)) name = 'schedule';
   activeTab = name;
 
+  // ---- 底部 Tab 的高亮
+  // 设置页不属于任何 Tab，所以全部取消高亮
   $$('.tab-btn').forEach((btn) => {
-    const isActive = btn.dataset.tab === name;
+    const isActive = !isSettings && btn.dataset.tab === name;
     btn.classList.toggle('active', isActive);
     btn.setAttribute('aria-selected', isActive ? 'true' : 'false');
   });
 
+  // ---- 面板切换
   $$('.tab-panel').forEach((panel) => {
     panel.classList.toggle('active', panel.id === `panel-${name}`);
   });
 
-  // 切换后刷新该页数据（不同页面之间可能互相影响，比如删除课程后提醒要更新）
+  // ---- 刷新该页数据
   if (name === 'schedule') {
     renderCourses();
     checkReminder();
@@ -221,12 +235,16 @@ function switchTab(name, { scrollTop = true } = {}) {
     else renderDiet();
   } else if (name === 'journal') {
     renderJournal();
+  } else if (isSettings) {
+    // 每次进入都重新读一遍设置，避免显示过期值
+    openSettings();
   }
 
   const main = $('.app-main');
   if (main && scrollTop) main.scrollTop = 0;
 
-  // 把当前页写进地址栏，方便刷新后回到同一页（也支持 ?tab=diet 直达）
+  // ---- 地址栏
+  // 设置页也写进 ?tab=，这样刷新后还在设置页（调试时有用）
   try {
     const url = new URL(window.location.href);
     if (name === 'schedule') url.searchParams.delete('tab');
@@ -238,14 +256,23 @@ function switchTab(name, { scrollTop = true } = {}) {
 }
 
 function initTabs() {
+  // ---- 底部三个 Tab
   $$('.tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
-  // 支持 ?tab=diet 直达（PWA 的 shortcuts 用到了这个）
+  // ---- 顶栏齿轮 → 设置页
+  $('#settingsButton')?.addEventListener('click', () => switchTab('settings'));
+
+  // ---- 设置页的返回按钮 → 回到课程表
+  $('#settingsBackBtn')?.addEventListener('click', () => switchTab('schedule'));
+
+  // ---- 支持 ?tab=diet 直达（PWA 的 shortcuts 用到了这个）
+  // 注意也要允许 ?tab=settings，方便调试时直接进设置页
   const params = new URLSearchParams(window.location.search);
   const initial = params.get('tab');
-  switchTab(TABS.includes(initial) ? initial : 'schedule');
+  const valid = initial === 'settings' || TABS.includes(initial);
+  switchTab(valid ? initial : 'schedule');
 }
 
 /* ==================================================================== 顶栏 */
@@ -336,6 +363,19 @@ function boot() {
     initSchedule({ notify: feedback.notify, scheduleUndo: feedback.scheduleUndo });
     initDiet({ notify: feedback.notify, scheduleUndo: feedback.scheduleUndo });
     initJournal({ notify: feedback.notify, scheduleUndo: feedback.scheduleUndo });
+    // 设置模块：改动设置后要通知各页面刷新（比如换了热量目标，饮食页要重算）
+    initSettings({
+      onChange: () => {
+        feedback.notify('设置已保存');
+        // 当前在哪一页就刷哪一页
+        if (activeTab === 'diet') {
+          if (getDietViewMode() === 'weekly') renderWeekly();
+          else renderDiet();
+        } else if (activeTab === 'schedule') {
+          checkReminder();
+        }
+      },
+    });
   } catch (err) {
     console.error('[boot] 模块初始化失败：', err);
     feedback.notify('部分功能初始化失败，请刷新页面', 5000);
