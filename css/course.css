@@ -1,0 +1,1008 @@
+/* ==========================================================================
+   课程表：周视图 + 导入流程
+   --------------------------------------------------------------------------
+   这是 v3.1 新增的样式。原来的列表视图样式还在 components.css 里，没动。
+   ========================================================================== */
+
+/* ================================================================ 视图切换条 */
+
+.schedule-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.schedule-bar .btn {
+  margin-left: auto;
+}
+
+/* ================================================================ 周次导航 */
+
+.week-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  padding: 8px 8px;
+  margin-bottom: var(--space-sm);
+}
+
+/* 38px：略小于 iOS 建议的 44px，但在 28px 宽的窄卡片里放两个 44px 会挤掉中间文字。
+   实际可点区域靠 padding 撑到 38，日常够用；比原来的 30px 明显好转。 */
+.week-arrow {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  color: var(--primary);
+  line-height: 1;
+}
+
+.week-arrow:active {
+  background: var(--surface-alt);
+}
+
+.week-mid {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+}
+
+.week-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.week-sub {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.week-sub[data-warn="1"] {
+  color: var(--accent);
+}
+
+.week-today {
+  display: block;
+  margin: 0 auto var(--space-sm);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--primary);
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: var(--success-light);
+  min-height: 30px;
+}
+
+/* ================================================================ 周视图 */
+
+.week-view {
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  padding: 10px 8px 8px;
+  margin-bottom: var(--space-m);
+}
+
+/* ---- 表头：周一到周日 + 日期 */
+.wk-head {
+  display: grid;
+  grid-template-columns: 28px repeat(7, 1fr);
+  margin-bottom: 5px;
+}
+
+.wk-gutter {
+  /* 左上角空白，与左侧节次栏同宽 */
+}
+
+.wk-day {
+  text-align: center;
+  line-height: 1.25;
+}
+
+.wk-day b {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wk-date {
+  display: block;
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+}
+
+.wk-day.is-today b {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.wk-day.is-today .wk-date {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.wk-day.is-weekend b {
+  color: var(--text-secondary);
+}
+
+/* ---- 网格主体
+   11 行 = 11 节课。行高固定 34px，一门 2 节的课就是 span 2，约 69px 高。
+   为什么不用 1fr 平分：那样每节会被拉到 50px 以上，
+   课程块显得比真实课表胖一圈，字上下的空白太多。                    */
+.wk-body {
+  display: grid;
+  grid-template-columns: 28px repeat(7, 1fr);
+  grid-template-rows: repeat(11, 34px);
+  gap: 1.5px 0;
+  position: relative;
+}
+
+.wk-gridline {
+  border-top: 1px solid var(--border);
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* 节次标签：竖排。
+   26~28px 宽放不下「九十十一」这种 4 个字，横排会挤成一团。 */
+.wk-period {
+  writing-mode: vertical-rl;
+  text-orientation: upright;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.56rem;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.1;
+  padding: 2px 0;
+}
+
+.wk-period.wide {
+  font-size: 0.5rem;
+}
+
+/* ---- 课程块 */
+.wk-block {
+  position: relative;
+  margin: 0 1px;
+  border-radius: 5px;
+  padding: 3px 3px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  border: none;
+  min-width: 0;
+  /* 保证触摸目标不因格子太小而失效 */
+  min-height: 20px;
+}
+
+.wk-block:active {
+  filter: brightness(0.92);
+}
+
+.wk-name {
+  font-size: 0.58rem;
+  font-weight: 600;
+  line-height: 1.2;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wk-teacher,
+.wk-room {
+  font-size: 0.52rem;
+  line-height: 1.25;
+  opacity: 0.86;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wk-parity {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 0.5rem;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* ---- 无课表课程提示 */
+.wk-noslot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-alt);
+  font-size: 0.7rem;
+  color: var(--text-secondary);
+  text-align: left;
+  min-height: 34px;
+}
+
+.wk-noslot b {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.wk-noslot-icon {
+  flex: none;
+}
+
+.wk-noslot-more {
+  margin-left: auto;
+  flex: none;
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* ---- 周概览 */
+.wk-overview {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface-alt);
+}
+
+.wk-ov-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.wk-ov-k {
+  font-size: 0.6rem;
+  color: var(--text-secondary);
+  margin-bottom: 2px;
+}
+
+.wk-ov-v {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.wk-ov-v em {
+  font-style: normal;
+  color: var(--primary);
+}
+
+.wk-ov-sep {
+  flex: none;
+  width: 1px;
+  background: var(--border);
+}
+
+/* ---- 空状态 */
+.wk-empty {
+  margin-top: 10px;
+  padding: 22px 12px;
+  text-align: center;
+}
+
+/* ================================================================ 导入 */
+
+#importOverlay {
+  align-items: flex-end;
+  justify-content: stretch;
+  padding: 0;
+}
+
+#importOverlay[hidden] {
+  display: none;
+}
+
+#importOverlay:not([hidden]) {
+  display: flex;
+}
+
+.import-panel {
+  width: 100%;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  max-height: 92vh;
+  min-height: 0;
+}
+
+/* 第一步：底部抽屉 */
+.import-panel.import-sheet {
+  border-radius: 20px 20px 0 0;
+  padding: 10px 16px calc(20px + var(--safe-bottom, 0px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 后续步骤：整屏 */
+.import-panel.import-full {
+  height: 92vh;
+  border-radius: 20px 20px 0 0;
+  padding-bottom: var(--safe-bottom, 0px);
+}
+
+.import-handle {
+  width: 34px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  margin: 0 auto 12px;
+}
+
+.import-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.import-head-row .import-title {
+  flex: 1;
+}
+
+.import-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  font-size: 15px;
+  color: var(--text-secondary);
+  background: var(--surface-alt);
+}
+
+.import-title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.import-lead {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin: 5px 0 14px;
+  line-height: 1.5;
+}
+
+/* ---- 大按钮选项 */
+.import-opt {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  padding: 13px 13px;
+  border-radius: var(--radius);
+  border: 1.5px solid var(--border);
+  background: var(--card);
+  margin-bottom: 9px;
+  min-height: 60px;
+}
+
+.import-opt.primary {
+  border-color: var(--primary);
+  background: var(--success-light);
+}
+
+.import-opt:active {
+  filter: brightness(0.97);
+}
+
+.import-opt-icon {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: var(--surface-alt);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+}
+
+.import-opt.primary .import-opt-icon {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.import-opt-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.import-opt-t {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.import-opt-d {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.import-opt-chev {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: 15px;
+  opacity: 0.6;
+}
+
+.import-manual {
+  display: block;
+  width: 100%;
+  padding: 11px 0 4px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  color: var(--primary);
+  text-align: center;
+  min-height: 40px;
+}
+
+.import-note {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--surface-alt);
+  font-size: 0.68rem;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+/* ---- 顶栏（后续步骤） */
+.import-topbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 10px;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+}
+
+.import-back {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text);
+}
+
+.import-back:active {
+  background: var(--surface-alt);
+}
+
+.import-titlewrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.import-topbar .import-title {
+  font-size: 0.95rem;
+}
+
+.import-sub {
+  font-size: 0.66rem;
+  color: var(--text-secondary);
+  margin-top: 1px;
+}
+
+.import-spacer {
+  flex: none;
+  width: 34px;
+}
+
+/* ---- 滚动区 + 底栏 */
+.import-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 12px;
+}
+
+.import-footer {
+  flex: none;
+  display: flex;
+  gap: 9px;
+  padding: 10px 12px calc(10px + var(--safe-bottom, 0px));
+  background: var(--card);
+  border-top: 1px solid var(--border);
+}
+
+.import-footer .btn {
+  flex: 1;
+  min-height: 44px;
+}
+
+/* ---- 图片预览 */
+.import-photo {
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: #2B2721;
+  margin-bottom: 12px;
+}
+
+.import-photo img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 42vh;
+  object-fit: contain;
+}
+
+.import-warn {
+  display: flex;
+  gap: 7px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warn-light);
+  color: var(--warn);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+/* ---- 识别中 */
+.import-busy-panel {
+  justify-content: center;
+}
+
+.import-busy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 24px 0;
+  text-align: center;
+}
+
+.import-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid var(--success-light);
+  border-top-color: var(--primary);
+  margin-bottom: 14px;
+  animation: import-spin 0.9s linear infinite;
+}
+
+@keyframes import-spin {
+  to { transform: rotate(360deg); }
+}
+
+.import-busy-t {
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 5px;
+}
+
+.import-busy-d {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.import-steps {
+  width: 100%;
+  margin-top: 18px;
+}
+
+.import-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+}
+
+.import-step.done {
+  color: var(--text);
+}
+
+.import-step.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.import-step-bullet {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+}
+
+.import-step.done .import-step-bullet {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.import-step.active .import-step-bullet {
+  border-color: var(--primary);
+  border-width: 2px;
+}
+
+/* ---- 文件 / 粘贴 */
+.import-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+
+.import-tabs button {
+  flex: 1;
+  padding: 10px 0;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  position: relative;
+  min-height: 40px;
+}
+
+.import-tabs button.on {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.import-tabs button.on::after {
+  content: '';
+  position: absolute;
+  left: 25%;
+  right: 25%;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--primary);
+}
+
+.import-pane[hidden] {
+  display: none;
+}
+
+.import-filezone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 22px 16px;
+  border-radius: var(--radius);
+  border: 2px dashed var(--border);
+  background: var(--surface-alt);
+  text-align: center;
+}
+
+.import-fz-icon {
+  font-size: 26px;
+  margin-bottom: 4px;
+}
+
+.import-fz-t {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.import-fz-d {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.import-fz-fmts {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 8px;
+}
+
+.import-fmt {
+  font-size: 0.62rem;
+  font-weight: 600;
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.import-textarea {
+  width: 100%;
+  min-height: 150px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.78rem;
+  line-height: 1.6;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  resize: vertical;
+  margin-bottom: 10px;
+}
+
+.import-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+.import-pane .btn {
+  width: 100%;
+  min-height: 44px;
+}
+
+/* ---- 确认列表 */
+.import-confirm-head {
+  background: var(--card);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  margin-bottom: 9px;
+}
+
+.import-ch-t {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 3px;
+}
+
+.import-ch-d {
+  font-size: 0.68rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.import-ch-warn {
+  display: flex;
+  gap: 5px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+  font-size: 0.68rem;
+  color: var(--warn);
+  line-height: 1.5;
+}
+
+.import-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.import-item {
+  border-radius: 9px;
+  overflow: hidden;
+}
+
+.import-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 9px 10px;
+  background: var(--card);
+  border: 1.5px solid transparent;
+  border-radius: 9px;
+}
+
+.import-row.dup {
+  border-color: #EAD9B0;
+  background: #FFFDF7;
+}
+
+.import-row.conflict {
+  border-color: #EFC5C5;
+  background: #FFFBFB;
+}
+
+.phone.dark .import-row.dup,
+.dark .import-row.dup {
+  background: #2A2418;
+  border-color: #4A3F22;
+}
+
+.phone.dark .import-row.conflict,
+.dark .import-row.conflict {
+  background: #2A1A1A;
+  border-color: #4A2A2A;
+}
+
+.import-ck {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border-radius: 5px;
+  border: 1.6px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: transparent;
+  background: transparent;
+}
+
+.import-ck.on {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+
+.import-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.import-name {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text);
+  padding: 1px 0;
+  min-height: 22px;
+}
+
+.import-name:focus {
+  outline: none;
+  border-bottom: 1.5px solid var(--primary);
+}
+
+.import-meta {
+  font-size: 0.66rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.import-flags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.import-flag {
+  font-size: 0.58rem;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: var(--surface-alt);
+  color: var(--text-secondary);
+}
+
+.import-flag.warn {
+  background: var(--warn-light);
+  color: var(--warn);
+}
+
+.import-flag.bad {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.import-edit-btn {
+  flex: none;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--primary);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--success-light);
+  min-height: 26px;
+}
+
+.import-edit {
+  background: var(--surface-alt);
+  border-radius: 0 0 9px 9px;
+  padding: 9px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: -4px;
+}
+
+.import-edit[hidden] {
+  display: none;
+}
+
+.import-edit-row {
+  display: flex;
+  gap: 7px;
+}
+
+.import-select,
+.import-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  font-size: 0.72rem;
+  min-height: 34px;
+}
+
+.import-select:focus,
+.import-input:focus {
+  outline: none;
+  border-color: var(--primary);
+}
+
+/* ---- 计数 */
+.import-count {
+  font-weight: 700;
+}
+
+/* ---- 错误 */
+.import-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 26px 10px 20px;
+}
+
+.import-error-icon {
+  font-size: 34px;
+  margin-bottom: 12px;
+}
+
+.import-error-text {
+  font-size: 0.8rem;
+  line-height: 1.65;
+  color: var(--text);
+}
+
+/* ================================================================ 暗色 */
+
+.dark .wk-gridline {
+  opacity: 0.6;
+}
+
+.dark .import-opt.primary {
+  background: var(--success-light);
+}
+
+.dark .import-opt.primary .import-opt-icon {
+  background: rgba(255, 255, 255, 0.12);
+}
