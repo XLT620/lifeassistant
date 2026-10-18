@@ -42,6 +42,7 @@
 <link rel="stylesheet" href="./css/base.css">
 <link rel="stylesheet" href="./css/components.css">
 <link rel="stylesheet" href="./css/settings.css">
+<link rel="stylesheet" href="./css/course.css">
 </head>
 
 <body>
@@ -119,6 +120,12 @@
   <symbol id="i-chevron-right-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M9 5l7 7-7 7"/>
   </symbol>
+  <!-- 导入：向上箭头 + 托盘 -->
+  <symbol id="i-upload" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M12 15V4"/>
+    <path d="M8 8l4-4 4 4"/>
+    <path d="M4 15v3.5A2.5 2.5 0 0 0 6.5 21h11A2.5 2.5 0 0 0 20 18.5V15"/>
+  </symbol>
 </svg>
 
 <div class="app-shell">
@@ -158,58 +165,90 @@
       <!-- ======================================================= 课程表 -->
       <div class="tab-panel active" id="panel-schedule">
 
-        <div class="card">
-          <div class="card-title">
-            <svg class="icon" aria-hidden="true"><use href="#i-book"/></svg> 添加课程
+        <!-- 视图切换 + 导入入口 -->
+        <div class="schedule-bar">
+          <div class="segmented" role="tablist" aria-label="课程表视图">
+            <button type="button" class="segmented-btn" data-sview="list"
+                    role="tab" aria-selected="false">列表</button>
+            <button type="button" class="segmented-btn active" data-sview="week"
+                    role="tab" aria-selected="true">周视图</button>
           </div>
-          <form id="courseForm" novalidate>
-            <div class="form-group">
-              <label class="form-label" for="courseName">课程名称</label>
-              <input class="form-input" id="courseName" name="name"
-                     placeholder="例：高等数学" autocomplete="off" required>
-            </div>
-
-            <div class="form-row">
-              <div class="form-group">
-                <label class="form-label" for="courseDay">星期</label>
-                <select class="form-select" id="courseDay" name="day">
-                  <option value="1">周一</option>
-                  <option value="2">周二</option>
-                  <option value="3">周三</option>
-                  <option value="4">周四</option>
-                  <option value="5">周五</option>
-                  <option value="6">周六</option>
-                  <option value="0">周日</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="courseStart">开始</label>
-                <input class="form-input" type="time" id="courseStart" name="start" required>
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="courseEnd">结束</label>
-                <input class="form-input" type="time" id="courseEnd" name="end" required>
-              </div>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label" for="courseLocation">上课地点（可选）</label>
-              <input class="form-input" id="courseLocation" name="location"
-                     placeholder="例：教学楼 A301" autocomplete="off">
-            </div>
-
-            <button class="btn btn-primary btn-block" type="submit">添加课程</button>
-          </form>
+          <button type="button" class="btn btn-primary btn-sm" id="importBtn">
+            <svg class="icon icon-sm" aria-hidden="true"><use href="#i-upload"/></svg>
+            导入
+          </button>
         </div>
 
-        <div class="card">
-          <div class="card-title">
-            <svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg> 我的课程
+        <!-- 周次导航 -->
+        <div class="week-nav" id="weekNav">
+          <button type="button" class="week-arrow" id="weekPrev" aria-label="上一周">‹</button>
+          <div class="week-mid">
+            <div class="week-label" id="weekLabel">第 1 周</div>
+            <div class="week-sub" id="weekSub"></div>
           </div>
-          <div class="day-filter" id="dayFilter" role="group" aria-label="按星期筛选"></div>
-          <div id="courseList"></div>
+          <button type="button" class="week-arrow" id="weekNext" aria-label="下一周">›</button>
         </div>
+        <button type="button" class="week-today" id="weekTodayBtn" hidden>回到本周</button>
 
+        <!-- 周视图容器 -->
+        <div class="week-view" id="weekView"></div>
+
+        <!-- 列表视图 -->
+        <div id="listView" hidden>
+
+          <div class="card">
+            <div class="card-title">
+              <svg class="icon" aria-hidden="true"><use href="#i-book"/></svg> 添加课程
+            </div>
+            <form id="courseForm" novalidate>
+              <div class="form-group">
+                <label class="form-label" for="courseName">课程名称</label>
+                <input class="form-input" id="courseName" name="name"
+                       placeholder="例：高等数学" autocomplete="off" required>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label class="form-label" for="courseDay">星期</label>
+                  <select class="form-select" id="courseDay" name="day">
+                    <option value="1">周一</option>
+                    <option value="2">周二</option>
+                    <option value="3">周三</option>
+                    <option value="4">周四</option>
+                    <option value="5">周五</option>
+                    <option value="6">周六</option>
+                    <option value="0">周日</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="courseStart">开始</label>
+                  <input class="form-input" type="time" id="courseStart" name="start" required>
+                </div>
+                <div class="form-group">
+                  <label class="form-label" for="courseEnd">结束</label>
+                  <input class="form-input" type="time" id="courseEnd" name="end" required>
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label class="form-label" for="courseLocation">上课地点（可选）</label>
+                <input class="form-input" id="courseLocation" name="location"
+                       placeholder="例：教学楼 A301" autocomplete="off">
+              </div>
+
+              <button class="btn btn-primary btn-block" type="submit">添加课程</button>
+            </form>
+          </div>
+
+          <div class="card">
+            <div class="card-title">
+              <svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg> 我的课程
+            </div>
+            <div class="day-filter" id="dayFilter" role="group" aria-label="按星期筛选"></div>
+            <div id="courseList"></div>
+          </div>
+
+        </div>
       </div>
 
       <!-- ======================================================= 饮食记录 -->
@@ -425,6 +464,25 @@
   <span class="undo-text" id="undoText"></span>
   <button type="button" class="undo-btn" id="undoBtn">撤销</button>
 </div>
+
+<!-- ============================================================== 课程导入 -->
+<!--
+  导入是一个多步流程（选方式 → 预览/解析 → 确认 → 导入），
+  每一步的内容都由 courseImport.js 动态生成，所以这里只有一个空容器。
+  这样 index.html 不用为每个步骤写一堆隐藏的 div。
+-->
+<div class="modal-overlay" id="importOverlay" role="dialog" aria-modal="true"
+     aria-label="导入课程表" hidden>
+  <div class="import-panel" id="importPanel"></div>
+</div>
+
+<!-- 三种文件输入（都由 JS 触发） -->
+<input type="file" accept="image/*" capture="environment"
+       id="importCameraInput" class="visually-hidden" tabindex="-1">
+<input type="file" accept="image/*"
+       id="importAlbumInput" class="visually-hidden" tabindex="-1">
+<input type="file" accept=".csv,.txt,.ics,.xlsx"
+       id="importFileInput" class="visually-hidden" tabindex="-1">
 
 <!-- ============================================================== 食物详情 -->
 <div class="modal-overlay" id="foodDetailModal" role="dialog" aria-modal="true"
