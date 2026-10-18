@@ -1,35 +1,35 @@
 /* ==========================================================================
    周视图
    --------------------------------------------------------------------------
-   把课程画成一张真正的课表：7 天 × 11 节。
+   把课程画成一张真正的课表：7 天 × 一整天。
 
-   设计依据（来自用户提供的真实教务系统截图）：
-     · 7 天都显示，表头带日期（周一 12）
-     · 左侧行标题是节次分组（一二节 / 三四节 / … / 九十十一节）
-     · 课程块里显示 课程名 / 教师 / 地点
-     · 底部提示「无课表课程」有多少门
+   ## 为什么按「时间」而不是按「节次」排版（v3.2 的重要改动）
 
-   为什么用 CSS Grid 而不是绝对定位：
-     绝对定位要自己算像素，字号一变就错位。
-     Grid 里一个课程块就是 grid-row: 第几节 / span 几节，
-     浏览器负责对齐，换字号也不用改代码。
+   第一版用「每节等高 36px」的行来摆课程块。结果是：
+   08:00–09:40 和 10:00–11:40 两块**无缝贴在一起**，
+   看起来像连上 4 节；午休的 2 小时完全消失 —— 这就是「和显示时间对不上」。
+
+   现在改成**按真实时间比例**摆放：
+     · 08:00 在最上，22:30 在最下
+     · 一块课的 top / height 直接由它的开始/结束时间算出
+     · 午休、晚饭这种长间隔压缩成一条细带
+       （否则一天 14 小时摊在 400px 里，一节课只有 20px 高，字放不下）
+
+   这样「课程块的位置」和「课程的时间」在定义上就不可能对不上。
+   课程块里还直接写着起止时间，可以对一眼验证。
+
+   ## 基准日期要用「课表开始执行的那一周」
+
+   教务处说的开学周 ≠ 课表第 1 周（中间可能夹军训）。
+   所以日期用 timetableStartDate，而不是 termStartDate。
    ========================================================================== */
 
 import { el, clear, timeToMinutes } from './utils.js';
-import {
-  WEEKDAY_NAMES, WEEKDAY_SHORT, PERIOD_TIMES, PERIOD_GROUPS,
-} from './constants.js';
+import { WEEKDAY_NAMES, WEEKDAY_SHORT, PERIOD_TIMES } from './constants.js';
 import { isCourseInWeek } from './parseTable.js';
 
 /* ---------------------------------------------------------------- 配色 */
 
-/**
- * 课程块的颜色。
- *
- * 按课程名算一个稳定的哈希，同一门课永远同色 ——
- * 一眼能看出「这块和那块是同一门课」。
- * 不提供调色功能：那对用户是负担，用处却不大。
- */
 const PALETTE = [
   { bg: '#4A7C6F', text: '#FFFFFF' },
   { bg: '#5B8FC7', text: '#FFFFFF' },
@@ -50,22 +50,141 @@ function colorFor(name) {
   return PALETTE[hash % PALETTE.length];
 }
 
+/* ---------------------------------------------------------------- 时间轴 */
+
+/** 压缩带：午休 2 小时、晚饭 1 小时。只压缩「整段都没课」的部分，见 buildSegments。 */
+const BREAK_BANDS = [
+  { from: 12 * 60, to: 14 * 60, height: 11, label: '午休' },
+  { from: 18 * 60, to: 19 * 60, height: 7, label: '晚饭' },
+];
+
+/** 允许显示的最早 / 最晚时间，避免出现凌晨那种离谱范围 */
+const EARLIEST = 7 * 60;
+const LATEST = 23 * 60;
+
+/** 网格主体的高度（px）。固定值，屏幕小也不会撑爆。
+ *  352 是折中：课程块还有约 70px 高（放得下 3 行课程名+时间），
+ *  同时让底部「周概览」在 852px 高的手机上能露出来。 */
+const GRID_HEIGHT = 352;
+
+/**
+ * 根据「所有课程」决定要显示的时间范围。
+ *
+ * 为什么要自适应：多数人的课都在 08:00–18:00。
+ * 如果永远画到 22:30，下面会空出约 120px 白板，
+ * 把周概览挤出屏幕（第一版就是这个毛病）。
+ *
+ * 用**全部课程**而不是本周课程来算，翻周时高度才不会跳来跳去。
+ *
+ * @returns {{from:number, to:number}}  分钟
+ */
+function dayRange(courses) {
+  const spans = courses
+    .filter((c) => !c.noSlot)
+    .map((c) => courseMinutes(c))
+    .filter(Boolean);
+
+  if (!spans.length) return { from: 8 * 60, to: 18 * 60 };
+
+  const lo = Math.min(...spans.map((s) => s.start));
+  const hi = Math.max(...spans.map((s) => s.end));
+
+  // 往前/后各留到整点，看起来不贴着边
+  let from = Math.max(EARLIEST, Math.floor(lo / 60) * 60);
+  let to = Math.min(LATEST, Math.ceil(hi / 60) * 60);
+
+  // 至少 4 小时，否则只有一节课时网格会扁得没法看
+  if (to - from < 4 * 60) to = Math.min(LATEST, from + 4 * 60);
+  return { from, to };
+}
+
+/**
+ * 把时间范围切成「正常段 + 压缩带」。
+ * 压缩带只在它整段都落在范围内时插入，被裁掉的部分不压缩。
+ */
+function buildSegments(from, to) {
+  const segments = [];
+  let cursor = from;
+
+  BREAK_BANDS.forEach((band) => {
+    if (band.to <= from || band.from >= to) return;   // 整段在范围外
+
+    const bf = Math.max(band.from, from);
+    const bt = Math.min(band.to, to);
+
+    if (bf > cursor) segments.push({ from: cursor, to: bf, kind: 'normal' });
+    if (bt > bf) {
+      segments.push({
+        from: bf, to: bt, kind: 'break', height: band.height, label: band.label,
+      });
+    }
+    cursor = bt;
+  });
+
+  if (cursor < to) segments.push({ from: cursor, to, kind: 'normal' });
+  return segments.length ? segments : [{ from, to, kind: 'normal' }];
+}
+
+/**
+ * 建立「分钟 → 像素」的映射。
+ * @returns {{yOf:Function, total:number, segments:Array, scale:number}}
+ */
+function makeTimeline(segments, height) {
+  const normalMinutes = segments
+    .filter((s) => s.kind === 'normal')
+    .reduce((sum, s) => sum + (s.to - s.from), 0);
+
+  const breakPx = segments
+    .filter((s) => s.kind === 'break')
+    .reduce((sum, s) => sum + s.height, 0);
+
+  const scale = normalMinutes > 0 ? (height - breakPx) / normalMinutes : 0;
+
+  let cursor = 0;
+  const laid = segments.map((s) => {
+    const isNormal = s.kind === 'normal';
+    const h = isNormal ? (s.to - s.from) * scale : s.height;
+    const seg = {
+      ...s,
+      y: cursor,
+      h,
+      // 每个段自己的比例（压缩带用它把分钟映射到像素）
+      localScale: h / (s.to - s.from),
+    };
+    cursor += h;
+    return seg;
+  });
+
+  const yOf = (min) => {
+    for (let i = 0; i < laid.length; i += 1) {
+      const seg = laid[i];
+      if (min <= seg.to || i === laid.length - 1) {
+        const clamped = Math.max(seg.from, Math.min(seg.to, min));
+        return seg.y + (clamped - seg.from) * seg.localScale;
+      }
+    }
+    return 0;
+  };
+
+  return { yOf, total: cursor, segments: laid, scale };
+}
+
 /* ---------------------------------------------------------------- 节次 */
 
-/** 课程从第几节开始、到第几节结束（都能算出来才返回） */
+/** 这门课在第几节到第几节（算不出来返回 null）。只用于统计「课时」。 */
 export function coursePeriods(course) {
   let sp = Number(course.startPeriod) || 0;
   let ep = Number(course.endPeriod) || 0;
 
-  // 没有节次信息（比如手填的课）→ 用开始时间反推
   if (!sp && course.start) {
     const min = timeToMinutes(course.start);
     if (min !== null) {
       for (let i = 0; i < PERIOD_TIMES.length; i += 1) {
         const p = PERIOD_TIMES[i];
-        const pStart = timeToMinutes(p.start);
-        const pEnd = timeToMinutes(p.end);
-        if (min >= pStart - 5 && min <= pEnd + 5) { sp = p.period; break; }
+        if (min >= timeToMinutes(p.start) - 5 && min <= timeToMinutes(p.end) + 5) {
+          sp = p.period;
+          break;
+        }
       }
     }
   }
@@ -74,8 +193,7 @@ export function coursePeriods(course) {
     if (min !== null) {
       for (let i = PERIOD_TIMES.length - 1; i >= 0; i -= 1) {
         const p = PERIOD_TIMES[i];
-        const pEnd = timeToMinutes(p.end);
-        if (min <= pEnd + 5) { ep = p.period; break; }
+        if (min <= timeToMinutes(p.end) + 5) { ep = p.period; break; }
       }
     }
   }
@@ -87,10 +205,9 @@ export function coursePeriods(course) {
 
 /* ---------------------------------------------------------------- 日期 */
 
-/** 第 1 周周一 → Date。解析失败返回 null。 */
-function termStart(termStartDate) {
-  if (!termStartDate) return null;
-  const m = String(termStartDate).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+function parseDate(iso) {
+  if (!iso) return null;
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})$/);
   if (!m) return null;
   const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
   return Number.isNaN(d.getTime()) ? null : d;
@@ -103,170 +220,205 @@ function addDays(date, n) {
 }
 
 /**
- * 今天是第几周。
- * 没设置开学日期时返回 1（界面会提示去设置）。
+ * 取出「课表基准日期」：优先 timetableStartDate，没填就退回 termStartDate。
+ * 这样只填一个也能用。
  */
-export function currentWeek(termStartDate) {
-  const start = termStart(termStartDate);
-  if (!start) return 1;
+export function resolveTimetableStart(settings = {}) {
+  return parseDate(settings.timetableStartDate) || parseDate(settings.termStartDate);
+}
+
+function weeksSince(start) {
+  if (!start) return null;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const diff = Math.floor((today.getTime() - start.getTime()) / (7 * 24 * 3600 * 1000));
   return Math.max(1, diff + 1);
 }
 
+/** 今天是课表的第几周。没有基准日期时返回 1。 */
+export function currentWeek(settings = {}) {
+  return weeksSince(resolveTimetableStart(settings)) ?? 1;
+}
+
+/** 今天是学期的第几周（用于「第 7 周 · 学期第 9 周」这种提示）。 */
+export function currentTermWeek(settings = {}) {
+  return weeksSince(parseDate(settings.termStartDate));
+}
+
 /* ---------------------------------------------------------------- 渲染 */
+
+function fmt(min) {
+  const h = Math.floor(min / 60);
+  const m = Math.round(min % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/** 把课程的时间解析成分钟；没写时间就用节次换算 */
+function courseMinutes(course) {
+  let s = timeToMinutes(course.start);
+  let e = timeToMinutes(course.end);
+
+  if (s === null || e === null) {
+    const p = coursePeriods(course);
+    if (p) {
+      const t1 = PERIOD_TIMES.find((x) => x.period === p.startPeriod);
+      const t2 = PERIOD_TIMES.find((x) => x.period === p.endPeriod);
+      if (s === null && t1) s = timeToMinutes(t1.start);
+      if (e === null && t2) e = timeToMinutes(t2.end);
+    }
+  }
+  if (s === null || e === null || e <= s) return null;
+  return { start: s, end: e };
+}
 
 /**
  * 画出周视图。
  *
- * @param {HTMLElement} root 容器（#weekView）
+ * @param {HTMLElement} root
  * @param {Object} opts
  * @param {Array}  opts.courses
- * @param {number} opts.week          要显示的周次
- * @param {string} opts.termStartDate 第 1 周周一，'YYYY-MM-DD'
- * @param {Function} [opts.onCourseClick] 点课程块的回调
- * @param {Function} [opts.onNoSlotClick] 点「无课表课程」的回调
+ * @param {number} opts.week
+ * @param {Object} opts.settings   需要 timetableStartDate / termStartDate
+ * @param {Function} [opts.onCourseClick]
+ * @param {Function} [opts.onNoSlotClick]
  */
 export function renderWeekGrid(root, opts) {
   if (!root) return;
   clear(root);
 
   const {
-    courses = [], week = 1, termStartDate = '',
+    courses = [], week = 1, settings = {},
     onCourseClick = () => {}, onNoSlotClick = () => {},
   } = opts;
 
-  const start = termStart(termStartDate);
-  const weekdayDates = start
-    ? Object.fromEntries(
-      WEEKDAY_SHORT.map((_, idx) => {
-        // WEEKDAY_SHORT 索引 0=周日，但课表从周一开始，所以换算
-        const offsetFromMonday = (idx + 6) % 7;
-        const d = addDays(start, (week - 1) * 7 + offsetFromMonday);
-        return [idx, d];
-      }),
-    )
-    : null;
-
-  // 本周实际要上的课
+  const start = resolveTimetableStart(settings);
   const weekCourses = courses.filter((c) => !c.noSlot && isCourseInWeek(c, week));
 
   const today = new Date();
+  today.setHours(0, 0, 0, 0);
   const todayIndex = today.getDay();
-  const isCurrentWeek = week === currentWeek(termStartDate);
+  const isCurrentWeek = week === currentWeek(settings);
 
-  /* ---------------- 表头 ---------------- */
+  const dayOrder = [1, 2, 3, 4, 5, 6, 0];   // 周一到周日
+
+  /* ---------------- 表头：周几 + 日期 ---------------- */
   const head = el('div', { class: 'wk-head' });
   head.appendChild(el('div', { class: 'wk-gutter' }));
-  // 显示顺序：周一到周日
-  const dayOrder = [1, 2, 3, 4, 5, 6, 0];
   dayOrder.forEach((dayIdx) => {
     const isToday = isCurrentWeek && dayIdx === todayIndex;
-    const cell = el('div', {
+    const offsetFromMonday = (dayIdx + 6) % 7;
+    const date = start ? addDays(start, (week - 1) * 7 + offsetFromMonday) : null;
+
+    head.appendChild(el('div', {
       class: `wk-day${isToday ? ' is-today' : ''}${(dayIdx === 0 || dayIdx === 6) ? ' is-weekend' : ''}`,
     }, [
       el('b', { text: WEEKDAY_SHORT[dayIdx] }),
-    ]);
-    const d = weekdayDates ? weekdayDates[dayIdx] : null;
-    cell.appendChild(el('span', { class: 'wk-date', text: d ? String(d.getDate()) : '' }));
-    head.appendChild(cell);
+      el('span', { class: 'wk-date', text: date ? String(date.getDate()) : '' }),
+    ]));
   });
   root.appendChild(head);
 
-  /* ---------------- 网格 ---------------- */
-  const body = el('div', { class: 'wk-body' });
+  /* ---------------- 主体 ---------------- */
+  // 时间范围按**全部课程**算（不是本周），翻周时高度不跳
+  const range = dayRange(courses);
+  const timeline = makeTimeline(buildSegments(range.from, range.to), GRID_HEIGHT);
 
-  /*
-   * 自动折叠「整学期都没有课」的节次组。
-   *
-   * 为什么：多数人的课都在 1~8 节，晚上 9~11 节空着。
-   * 如果永远画出来，会白白占掉约 100px，把周概览挤到屏幕外。
-   *
-   * 判断依据是**整份课程数据**（不是这一周），所以翻周时行数不会跳来跳去。
-   * 将来导入了晚课，这一行会自动出现。
-   */
-  const usedPeriods = new Set();
-  courses.forEach((c) => {
-    if (c.noSlot) return;
-    const p = coursePeriods(c);
-    if (!p) return;
-    for (let i = p.startPeriod; i <= p.endPeriod; i += 1) usedPeriods.add(i);
+  const body = el('div', {
+    class: 'wk-body',
+    style: { height: `${GRID_HEIGHT}px` },
   });
 
-  const activeGroups = PERIOD_GROUPS.filter(
-    (g) => g.periods.some((p) => usedPeriods.has(p)),
-  );
-  const groups = activeGroups.length ? activeGroups : PERIOD_GROUPS;
-
-  // 节次 → 行号（1 起）
-  const rowOf = {};
-  let rowCursor = 1;
-  groups.forEach((g) => {
-    g.periods.forEach((p) => { rowOf[p] = rowCursor; rowCursor += 1; });
-  });
-  const totalRows = rowCursor - 1;
-
-  body.style.gridTemplateRows = `repeat(${totalRows}, 34px)`;
-
-  // 行背景 + 节次标签
-  for (let r = 1; r <= totalRows; r += 1) {
+  // 7 个日期列（背景 + 今日高亮）
+  dayOrder.forEach((dayIdx, i) => {
+    const isToday = isCurrentWeek && dayIdx === todayIndex;
     body.appendChild(el('div', {
-      class: 'wk-gridline',
-      style: { gridColumn: '2 / span 7', gridRow: String(r) },
+      class: `wk-col${isToday ? ' is-today' : ''}`,
+      style: {
+        left: `${(i * 100) / 7}%`,
+        width: `${100 / 7}%`,
+      },
+    }));
+  });
+
+  // 压缩带（午休 / 晚饭）
+  timeline.segments.filter((s) => s.kind === 'break').forEach((seg) => {
+    body.appendChild(el('div', {
+      class: 'wk-break',
+      style: { top: `${seg.y}px`, height: `${seg.h}px` },
+    }, [
+      el('span', { class: 'wk-break-label', text: seg.label }),
+    ]));
+  });
+
+  // 整点横线（跳过压缩带内部）
+  for (let h = Math.ceil(range.from / 60); h * 60 <= range.to; h += 1) {
+    const min = h * 60;
+    const inBreak = timeline.segments.some((s) => s.kind === 'break' && min > s.from && min < s.to);
+    if (inBreak || min === range.from) continue;
+    body.appendChild(el('div', {
+      class: 'wk-line',
+      style: { top: `${timeline.yOf(min)}px` },
     }));
   }
-  groups.forEach((group) => {
-    const from = rowOf[group.periods[0]] || 1;
-    const span = group.periods.filter((p) => rowOf[p]).length || 1;
+
+  // 左侧时间刻度：每 2 小时一个。
+  // 要跳过压缩带的**内部**和**结束点** —— 午休被压成 11px 后，
+  // 「12」和「14」两个刻度只差 11px，会叠在一起看不清。
+  for (let h = Math.ceil(range.from / 60); h * 60 < range.to; h += 2) {
+    const min = h * 60;
+    const clash = timeline.segments.some(
+      (s) => s.kind === 'break' && min > s.from && min <= s.to,
+    );
+    if (clash) continue;
     body.appendChild(el('div', {
-      class: `wk-period${span >= 3 ? ' wide' : ''}`,
-      style: { gridColumn: '1', gridRow: `${from} / span ${span}` },
-      text: group.label,
+      class: 'wk-hour',
+      style: { top: `${timeline.yOf(min)}px` },
+      text: String(h).padStart(2, '0'),
     }));
-  });
+  }
 
-  // 课程块
+  /* ---------------- 课程块 ---------------- */
+  const skipped = [];
+
   weekCourses.forEach((course) => {
-    const periods = coursePeriods(course);
-    if (!periods) return;
+    const mins = courseMinutes(course);
+    if (!mins) { skipped.push(course.name); return; }
 
-    // 折算成折叠后的行号；开始节次被折叠掉时（极少数）就跳过
-    const startRow = rowOf[periods.startPeriod];
-    if (!startRow) return;
+    const top = timeline.yOf(mins.start);
+    const bottom = timeline.yOf(mins.end);
+    const height = Math.max(20, bottom - top);
 
-    // 结束节次可能超出可见范围（比如只显示到第 8 节），就画到最后一行
-    let endRow = startRow;
-    for (let p = periods.startPeriod; p <= periods.endPeriod; p += 1) {
-      if (rowOf[p]) endRow = rowOf[p];
-    }
-    const span = Math.max(1, endRow - startRow + 1);
-
-    // day 1..6,0 → 列号 2..8（周一是第 2 列）
-    const colIndex = course.day === 0 ? 8 : Number(course.day) + 1;
-
+    const dayIdx = Number(course.day);
+    const colIndex = (dayIdx + 6) % 7;    // 周一 → 0，周日 → 6
     const color = colorFor(course.name);
+
     const block = el('button', {
       type: 'button',
-      class: 'wk-block',
+      class: `wk-block${height < 42 ? ' tiny' : ''}`,
       style: {
-        gridColumn: String(colIndex),
-        gridRow: `${startRow} / span ${span}`,
+        top: `${top}px`,
+        height: `${height}px`,
+        left: `calc(${(colIndex * 100) / 7}% + 1px)`,
+        width: `calc(${100 / 7}% - 2px)`,
         background: color.bg,
         color: color.text,
       },
-      'aria-label': `${course.name} ${WEEKDAY_NAMES[course.day]} 第${periods.startPeriod}-${periods.endPeriod}节`,
+      title: `${course.name} ${fmt(mins.start)}–${fmt(mins.end)}`,
+      'aria-label': `${course.name} ${WEEKDAY_NAMES[dayIdx]} ${fmt(mins.start)} 到 ${fmt(mins.end)}`,
       onclick: () => onCourseClick(course),
     }, [
       el('span', { class: 'wk-name', text: course.name }),
+      // 只写开始时间：7 列宽度下「08:00–09:40」放不下会被截成「08:00–09:4」，
+      // 反而看不出来。结束时间看块的高度和详情弹窗。
+      el('span', { class: 'wk-time', text: fmt(mins.start) }),
     ]);
 
-    if (course.teacher) {
-      block.appendChild(el('span', { class: 'wk-teacher', text: course.teacher }));
+    // 教师 / 地点合成一行，短块里自然会被裁掉
+    const metaText = [course.teacher, course.room].filter(Boolean).join(' · ');
+    if (metaText) {
+      block.appendChild(el('span', { class: 'wk-meta', text: metaText }));
     }
-    if (course.room) {
-      block.appendChild(el('span', { class: 'wk-room', text: course.room }));
-    }
+
     if (course.parity === 'odd' || course.parity === 'even') {
       block.appendChild(el('span', {
         class: 'wk-parity',
@@ -279,13 +431,11 @@ export function renderWeekGrid(root, opts) {
 
   root.appendChild(body);
 
-  /* ---------------- 底部：无课表课程 ---------------- */
+  /* ---------------- 无课表课程 ---------------- */
   const noSlot = courses.filter((c) => c.noSlot);
   if (noSlot.length) {
-    const bar = el('button', {
-      type: 'button',
-      class: 'wk-noslot',
-      onclick: onNoSlotClick,
+    root.appendChild(el('button', {
+      type: 'button', class: 'wk-noslot', onclick: onNoSlotClick,
     }, [
       el('span', { class: 'wk-noslot-icon', text: '📌' }),
       el('span', {}, [
@@ -294,36 +444,29 @@ export function renderWeekGrid(root, opts) {
         document.createTextNode(' 门课没有固定时间'),
       ]),
       el('span', { class: 'wk-noslot-more', text: '查看 ›' }),
-    ]);
-    root.appendChild(bar);
+    ]));
   }
 
-  /* ---------------- 概览 ---------------- */
-  root.appendChild(buildOverview(weekCourses, week));
+  /* ---------------- 周概览 ---------------- */
+  root.appendChild(buildOverview(weekCourses, week, skipped));
 
   /* ---------------- 空状态 ---------------- */
-  if (weekCourses.length === 0 && courses.length === 0) {
+  if (weekCourses.length === 0) {
     root.appendChild(el('div', { class: 'wk-empty' }, [
-      el('div', { class: 'empty-icon', text: '📅' }),
-      el('div', { class: 'empty-text', text: '还没有课程。点右上角「导入」可以一次录完整学期。' }),
-    ]));
-  } else if (weekCourses.length === 0) {
-    root.appendChild(el('div', { class: 'wk-empty' }, [
-      el('div', { class: 'empty-icon', text: '🏖' }),
-      el('div', { class: 'empty-text', text: `第 ${week} 周没有课` }),
+      el('div', { class: 'empty-icon', text: courses.length === 0 ? '📅' : '🏖' }),
+      el('div', {
+        class: 'empty-text',
+        text: courses.length === 0
+          ? '还没有课程。点右上角「导入」可以一次录完整学期。'
+          : `第 ${week} 周没有课`,
+      }),
     ]));
   }
 }
 
 /* ---------------------------------------------------------------- 概览 */
 
-/**
- * 周概览：最忙的一天、最长空档、本周节数。
- *
- * 这三个数字回答的是「这周累不累、哪段能自习」，
- * 比单纯显示「共 X 节课」有用。
- */
-function buildOverview(weekCourses, week) {
+function buildOverview(weekCourses, week, skipped) {
   const byDay = new Array(7).fill(0);
   weekCourses.forEach((c) => { byDay[Number(c.day) || 0] += 1; });
 
@@ -333,22 +476,21 @@ function buildOverview(weekCourses, week) {
     if (count > busiestCount) { busiestCount = count; busiestDay = day; }
   });
 
-  // 最长空档：同一天两节课之间的最大间隔（只算 20 分钟以上的）
+  // 最长空档（同一天两节课之间，只算 20 分钟以上）
   let bestGap = 0;
   let bestGapText = '—';
   for (let day = 0; day < 7; day += 1) {
     const list = weekCourses
-      .filter((c) => Number(c.day) === day && c.start && c.end)
-      .map((c) => ({ s: timeToMinutes(c.start), e: timeToMinutes(c.end) }))
-      .filter((x) => x.s !== null && x.e !== null)
-      .sort((a, b) => a.s - b.s);
+      .filter((c) => Number(c.day) === day)
+      .map((c) => courseMinutes(c))
+      .filter(Boolean)
+      .sort((a, b) => a.start - b.start);
 
     for (let i = 1; i < list.length; i += 1) {
-      const gap = list[i].s - list[i - 1].e;
+      const gap = list[i].start - list[i - 1].end;
       if (gap > bestGap && gap >= 20) {
         bestGap = gap;
-        // 只显示「周一 09:40–14:00」——后面的时长在窄栏里会被截掉，不如不写
-        bestGapText = `${WEEKDAY_NAMES[day]} ${fmt(list[i - 1].e)}–${fmt(list[i].s)}`;
+        bestGapText = `${WEEKDAY_NAMES[day]} ${fmt(list[i - 1].end)}–${fmt(list[i].start)}`;
       }
     }
   }
@@ -363,7 +505,6 @@ function buildOverview(weekCourses, week) {
   wrap.appendChild(el('div', { class: 'wk-ov-col' }, [
     el('div', { class: 'wk-ov-k', text: '最忙的一天' }),
     el('div', { class: 'wk-ov-v' }, busiestCount > 0
-      // 用「周一」而不是「一」——单个「一」在小字号下看起来像破折号
       ? [el('em', { text: WEEKDAY_NAMES[busiestDay] }), document.createTextNode(` · ${busiestCount} 节`)]
       : [document.createTextNode('—')]),
   ]));
@@ -382,11 +523,14 @@ function buildOverview(weekCourses, week) {
     el('div', { class: 'wk-ov-v', text: `${weekCourses.length} 节 · ${periods} 课时` }),
   ]));
 
-  return wrap;
-}
+  // 有时间缺失的课要明确说出来，而不是默默不画
+  if (skipped.length) {
+    wrap.appendChild(el('div', { class: 'wk-ov-sep' }));
+    wrap.appendChild(el('div', { class: 'wk-ov-col' }, [
+      el('div', { class: 'wk-ov-k', text: '时间缺失' }),
+      el('div', { class: 'wk-ov-v wk-ov-warn', text: `${skipped.length} 门没排上` }),
+    ]));
+  }
 
-function fmt(min) {
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  return wrap;
 }

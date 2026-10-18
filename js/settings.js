@@ -98,17 +98,48 @@ export function renderSettings() {
 /**
  * 学期设置。
  *
- * 为什么需要「第 1 周的周一」：
- *   周视图要显示「周一 12」这种日期，还要算出「现在是第几周」、
- *   判断单双周。没有基准日期这些全算不出来。
+ * 这里有两个日期，为什么不能合成一个：
+ *
+ *   教务处公布的开学日（第 1 周） ≠ 课表实际执行的第 1 周。
+ *   比如 9 月 1 日开学，但前两周军训，课表从 9 月 15 日才开始按「第 1 周」走。
+ *   学生手里的课表写「第 1 周」，对应的真实日期是 9 月 15 日。
+ *
+ *   周视图显示的日期、「本周」判断、单双周，都必须用
+ *   「课表第 1 周」那个日期（timetableStartDate），
+ *   否则整个学期会错开几周 —— 这就是用户报的「本周日期和课表日期不匹配」。
  */
 function buildTermSection() {
   const card = el('div', { class: 'card' }, [
     el('div', { class: 'card-title' }, ['📅', ' 学期设置']),
   ]);
 
+  // ---- 课表基准日期（决定周视图画哪一周）
   card.appendChild(el('div', { class: 'form-group' }, [
-    el('label', { class: 'form-label', for: 'termStartInput', text: '第 1 周的周一' }),
+    el('label', { class: 'form-label', for: 'timetableStartInput', text: '课表第 1 周的周一' }),
+    el('input', {
+      class: 'form-input',
+      id: 'timetableStartInput',
+      type: 'date',
+      value: settings.timetableStartDate || '',
+      onchange: (e) => persist({ timetableStartDate: e.target.value }, { notifyText: '已保存' }),
+    }),
+  ]));
+
+  card.appendChild(el('div', {
+    class: 'form-hint',
+    text: '这一项给周视图用：显示每天是几号、判断现在是第几周、算单双周。'
+      + '翻一下教务系统，看「第 1 周」是从哪个周一开始。'
+      + '拿不准就先填这个，下面那项留空会自动沿用它。',
+  }));
+
+  // ---- 教务处公布的开学日期（只用来提示学期第几周）
+  card.appendChild(el('div', {
+    class: 'form-group',
+    style: { marginTop: 'var(--space-md)' },
+  }, [
+    el('label', {
+      class: 'form-label', for: 'termStartInput', text: '教务处公布的开学日期（可留空）',
+    }),
     el('input', {
       class: 'form-input',
       id: 'termStartInput',
@@ -120,10 +151,13 @@ function buildTermSection() {
 
   card.appendChild(el('div', {
     class: 'form-hint',
-    text: '用来算「现在是第几周」和显示每天日期。不确定就翻一下教务系统，'
-      + '看第 1 周是从哪天开始的。留空也能用，只是不显示日期。',
+    text: '如果开学后先军训、课表晚几周才开始，就两个都填：'
+      + '上面填课表第 1 周那天，下面填教务处说的开学日。'
+      + '这样周视图会额外提示「学期第几周」，你能一眼核对两个周次对不对得上。'
+      + '两者其实是同一天，就只填上面那个。',
   }));
 
+  // ---- 总周数
   const weekSelect = el('select', {
     class: 'form-select',
     id: 'totalWeeksInput',

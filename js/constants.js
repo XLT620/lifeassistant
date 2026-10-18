@@ -147,6 +147,19 @@ export const DEFAULT_SETTINGS = {
    */
   termStartDate: '',
 
+  /**
+   * 课表实际开始执行的那一周的周一，格式 'YYYY-MM-DD'。
+   *
+   * 为什么它和 termStartDate 要分开：
+   *   教务处说 9 月 1 日开学（第 1 周），但前两周是军训，
+   *   课表从第 3 周才开始按「第 1 周」执行。
+   *   这时学生手里的课表写「第 1 周」，对应的真实日期是 9 月 15 日。
+   *
+   * 周视图的日期、「本周」判断都用这个日期，不用 termStartDate。
+   * 留空时退回用 termStartDate（多数情况下两者相同）。
+   */
+  timetableStartDate: '',
+
   /** 一学期总共多少教学周（周视图能翻到的最远周） */
   totalWeeks: 20,
 };

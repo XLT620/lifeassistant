@@ -12,7 +12,7 @@ import {
 } from './utils.js';
 import { STORAGE_KEYS, WEEKDAY_NAMES } from './constants.js';
 import * as store from './store.js';
-import { renderWeekGrid, currentWeek } from './weekGrid.js';
+import { renderWeekGrid, currentWeek, currentTermWeek } from './weekGrid.js';
 
 /* ---------------------------------------------------------------- 状态 */
 
@@ -120,7 +120,11 @@ function renderWeek() {
   if (!root) return;
 
   const settings = store.loadSettings();
-  const base = currentWeek(settings.termStartDate);
+
+  // 「今天在课表的第几周」用课表基准日期（timetableStartDate），
+  // 不是教务处的开学日期 —— 两者可能差几周（军训那种）。
+  const base = currentWeek(settings);
+  const termWeek = currentTermWeek(settings);
   const totalWeeks = Number(settings.totalWeeks) || 20;
   const week = Math.min(totalWeeks, Math.max(1, base + weekOffset));
 
@@ -130,15 +134,31 @@ function renderWeek() {
   if (labelEl) {
     labelEl.textContent = `第 ${week} 周`;
   }
+
   if (subEl) {
-    if (!settings.termStartDate) {
-      subEl.textContent = '还没设置开学日期，先按第 1 周显示 · 点这里去设置';
+    const hasBase = settings.timetableStartDate || settings.termStartDate;
+
+    if (!hasBase) {
+      subEl.textContent = '还没设置课表开始日期，先按第 1 周显示 · 点这里去设置';
       subEl.dataset.warn = '1';
     } else {
-      subEl.textContent = week === base
-        ? `本周 · 共 ${totalWeeks} 周`
-        : (week < base ? `比本周早 ${base - week} 周` : `比本周晚 ${week - base} 周`);
       delete subEl.dataset.warn;
+
+      const parts = [];
+      parts.push(week === base
+        ? '本周'
+        : (week < base ? `比本周早 ${base - week} 周` : `比本周晚 ${week - base} 周`));
+      parts.push(`共 ${totalWeeks} 周`);
+
+      // 如果填了两个日期，顺便告一下对应学期的第几周，方便核对
+      if (termWeek !== null && settings.timetableStartDate) {
+        const academicWeek = termWeek + (week - base);
+        if (academicWeek !== week) {
+          parts.push(`学期第 ${academicWeek} 周`);
+        }
+      }
+
+      subEl.textContent = parts.join(' · ');
     }
   }
 
@@ -149,7 +169,7 @@ function renderWeek() {
   renderWeekGrid(root, {
     courses,
     week,
-    termStartDate: settings.termStartDate,
+    settings,
     onCourseClick: (course) => showCourseDetail(course),
     onNoSlotClick: () => showNoSlotList(),
   });
