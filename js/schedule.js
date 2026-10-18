@@ -7,17 +7,24 @@
    ========================================================================== */
 
 import {
-  $, el, clear, genId, timeToMinutes, minutesToTime,
+  $, $$, el, clear, genId, timeToMinutes, minutesToTime,
   minutesSinceMidnight,
 } from './utils.js';
 import { STORAGE_KEYS, WEEKDAY_NAMES } from './constants.js';
 import * as store from './store.js';
+import { renderWeekGrid, currentWeek } from './weekGrid.js';
 
 /* ---------------------------------------------------------------- 状态 */
 
 let courses = [];
 let selectedDay = new Date().getDay();   // -1 = 全部；0–6 与 Date.getDay() 对齐
 let deps = { notify: () => {}, scheduleUndo: () => {} };
+
+/** 'week' = 周视图（默认），'list' = 原来的列表 + 添加表单 */
+let viewMode = 'week';
+
+/** 相对「本周」的偏移：0 = 本周，-1 = 上一周，1 = 下一周 */
+let weekOffset = 0;
 
 /* ---------------------------------------------------------------- 初始化 */
 
@@ -34,7 +41,150 @@ export function initSchedule(dependencies) {
   });
 
   renderDayFilter();
+  bindViewSwitch();
+  bindWeekNav();
+  renderSchedule();
+}
+
+/* ---------------------------------------------------------------- 视图切换 */
+
+function bindViewSwitch() {
+  $$('[data-sview]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      viewMode = btn.dataset.sview === 'week' ? 'week' : 'list';
+      renderSchedule();
+    });
+  });
+}
+
+function bindWeekNav() {
+  $('#weekPrev')?.addEventListener('click', () => {
+    weekOffset -= 1;
+    renderWeek();
+  });
+  $('#weekNext')?.addEventListener('click', () => {
+    // 不允许翻到「未来太多」—— 停在课程可能存在的范围（当前周 + 总周数）
+    const settings = store.loadSettings();
+    const maxOffset = Math.max(0, (Number(settings.totalWeeks) || 20) - 1);
+    if (weekOffset >= maxOffset) {
+      deps.notify('已经翻到最后一周了');
+      return;
+    }
+    weekOffset += 1;
+    renderWeek();
+  });
+  $('#weekTodayBtn')?.addEventListener('click', () => {
+    weekOffset = 0;
+    renderWeek();
+  });
+}
+
+/**
+ * 重新渲染课程表（列表或周视图，按当前模式）。
+ * 外部模块（导入、设置变更）改完数据后调这个。
+ */
+export function renderSchedule() {
+  const weekWrap = $('#weekView');
+  const listWrap = $('#listView');
+  const nav = $('#weekNav');
+
+  // 同步分段控件的选中态
+  $$('[data-sview]').forEach((btn) => {
+    const on = btn.dataset.sview === viewMode;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
+
+  if (weekWrap) weekWrap.hidden = viewMode !== 'week';
+  if (nav) nav.hidden = viewMode !== 'week';
+  if (listWrap) listWrap.hidden = viewMode !== 'list';
+
+  // 两个视图都渲染，只是隐藏其中一个。
+  // 好处：切换视图是瞬间的，而且不会有「另一个视图数据是旧的」这种情况。
+  // 代价：多一次 DOM 构建，可以忽略。
+  renderWeek();
   renderCourses();
+}
+
+/** 从存储重新读一遍课程（导入之后用） */
+export function reloadCourses() {
+  courses = store.loadCourses();
+  renderSchedule();
+  checkReminder();
+}
+
+/* ---------------------------------------------------------------- 周视图 */
+
+function renderWeek() {
+  const root = $('#weekView');
+  if (!root) return;
+
+  const settings = store.loadSettings();
+  const base = currentWeek(settings.termStartDate);
+  const totalWeeks = Number(settings.totalWeeks) || 20;
+  const week = Math.min(totalWeeks, Math.max(1, base + weekOffset));
+
+  const labelEl = $('#weekLabel');
+  const subEl = $('#weekSub');
+
+  if (labelEl) {
+    labelEl.textContent = `第 ${week} 周`;
+  }
+  if (subEl) {
+    if (!settings.termStartDate) {
+      subEl.textContent = '还没设置开学日期，先按第 1 周显示 · 点这里去设置';
+      subEl.dataset.warn = '1';
+    } else {
+      subEl.textContent = week === base
+        ? `本周 · 共 ${totalWeeks} 周`
+        : (week < base ? `比本周早 ${base - week} 周` : `比本周晚 ${week - base} 周`);
+      delete subEl.dataset.warn;
+    }
+  }
+
+  // 「回到本周」按钮只在不是本周时出现
+  const todayBtn = $('#weekTodayBtn');
+  if (todayBtn) todayBtn.hidden = week === base;
+
+  renderWeekGrid(root, {
+    courses,
+    week,
+    termStartDate: settings.termStartDate,
+    onCourseClick: (course) => showCourseDetail(course),
+    onNoSlotClick: () => showNoSlotList(),
+  });
+}
+
+/* ---------------------------------------------------------------- 详情 */
+
+/**
+ * 点课程块 → 用底部抽屉显示详情。
+ * 比跳新页面轻，关掉成本低。
+ */
+function showCourseDetail(course) {
+  const messages = [
+    course.name,
+    `${WEEKDAY_NAMES[course.day] || ''} ${course.start || ''}–${course.end || ''}`,
+  ];
+  if (course.teacher) messages.push(`教师：${course.teacher}`);
+  if (course.room) messages.push(`地点：${course.room}`);
+  if (course.weeks) messages.push(`周次：${course.weeks}`);
+
+  const confirmed = window.confirm(`${messages.join('\n')}\n\n要删除这门课吗？（可以撤销）`);
+  if (confirmed) {
+    // 直接走延迟提交的删除
+    deleteCourse(course);
+  }
+}
+
+/** 无课表课程：列出来给用户看 */
+function showNoSlotList() {
+  const list = courses.filter((c) => c.noSlot);
+  if (!list.length) return;
+  const text = list
+    .map((c) => `· ${c.name}${c.weeks ? `（${c.weeks}）` : ''}`)
+    .join('\n');
+  window.alert(`这些课没有固定的星期和节次：\n\n${text}\n\n它们不会画进周视图。`);
 }
 
 /* ---------------------------------------------------------------- 增删 */
@@ -97,7 +247,7 @@ function handleAddCourse() {
   if (startEl) startEl.value = '';
   if (endEl) endEl.value = '';
 
-  renderCourses();
+  renderSchedule();
   checkReminder();
   deps.notify('课程已添加');
 }
@@ -123,7 +273,7 @@ function deleteCourse(course) {
   // 1. 先从界面移除
   const previousList = courses.slice();
   courses = courses.filter((c) => c.id !== course.id);
-  renderCourses();
+  renderSchedule();
   checkReminder();
 
   // 2. 登记延迟提交
@@ -135,7 +285,7 @@ function deleteCourse(course) {
       if (!result.ok) {
         // 落库失败：把课程放回去，并明确告诉用户
         courses = previousList;
-        renderCourses();
+        renderSchedule();
         checkReminder();
         deps.notify('删除没有保存成功，课程已恢复');
       }
@@ -143,7 +293,7 @@ function deleteCourse(course) {
     // revert：撤销 —— 数据从未被删，只需把界面恢复
     () => {
       courses = previousList;
-      renderCourses();
+      renderSchedule();
       checkReminder();
     },
   );

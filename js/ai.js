@@ -501,3 +501,298 @@ export async function testConnection(settings, fetchImpl = fetch) {
     return { ok: false, message: `测试失败：${err.message}` };
   }
 }
+
+/* ==========================================================================
+   课程表识别
+   --------------------------------------------------------------------------
+   和食物识别共用同一套「连接方式 / 错误分类 / JSON 容错」，
+   但提示词和返回结构完全不同：这次要的是一整张课表（多门课）。
+
+   为什么让 AI 返回「第几节」而不是时间：
+     课表上写的就是「一二节」，让它换算成 08:00 反而容易算错；
+     节次→时间的换算交给本地的 PERIOD_TIMES 表，可核对、可修改。
+   ========================================================================== */
+
+/**
+ * 课表识别的系统提示词。
+ *
+ * 三条硬要求（来自 DeepSeek 官方文档，缺一个就可能解析失败）：
+ *   1. 提示词里必须出现 "json"
+ *   2. 必须给出 JSON 格式示例
+ *   3. 必须说清「认不出来时怎么返回」，否则它会瞎编
+ */
+const TIMETABLE_PROMPT = [
+  '你是课程表识别助手。用户会给你一张大学课程表的截图或照片。',
+  '',
+  '只输出一个 JSON 对象，不要解释文字，不要用 markdown 代码围栏。',
+  '',
+  'JSON 格式示例：',
+  '{',
+  '  "courses": [',
+  '    {',
+  '      "name": "国家安全教育",',
+  '      "teacher": "蒋荣华",',
+  '      "room": "厚德206",',
+  '      "day": 1,',
+  '      "startPeriod": 1,',
+  '      "endPeriod": 2,',
+  '      "weeks": "1-16"',
+  '    }',
+  '  ],',
+  '  "noSlotCourses": [',
+  '    { "name": "军事技能", "code": "B29800001", "weeks": "1" }',
+  '  ],',
+  '  "weekdayHeaderDetected": true,',
+  '  "periodColumnDetected": true,',
+  '  "confidence": 0.85,',
+  '  "notes": "第 7 周，九十节以后没有课"',
+  '}',
+  '',
+  '字段说明：',
+  '- day：1=周一，2=周二 … 7=周日。必须是数字。',
+  '- startPeriod / endPeriod：第几节课，数字。「一二节」写 1 和 2；「三四节」写 3 和 4；',
+  '  「九十十一节」写 9 和 11。',
+  '- weeks：周次原文，比如 "1-16"、"1-8"、"单周"、"双周"。看不到就写 ""。',
+  '- teacher：可能多个，用逗号连接，原样保留。',
+  '- room：教室或场地名。',
+  '- noSlotCourses：课表底部单独列出、**没有具体星期和节次**的课（如军训、劳动教育、入学教育）。',
+  '  这些只填 name / code / weeks。',
+  '',
+  '⚠️ 重要规则：',
+  '1. 一格里的文字形如「课程名-教师@地点」，请拆成三个字段。',
+  '2. 如果一格里有多个教师（用逗号分隔），teacher 里原样保留。',
+  '3. 如果认不出某个格子，宁可不返回这一门，也不要编造。',
+  '4. 如果整张图看不清、或者不是课程表，返回 {"courses":[],"noSlotCourses":[],"weekdayHeaderDetected":false,"periodColumnDetected":false,"confidence":0,"notes":"看不清"}',
+  '5. weekdayHeaderDetected = 有没有认出「周一/周二…」这一行表头。',
+  '6. periodColumnDetected = 有没有认出「一二节/三四节…」这一列行标题。',
+].join('\n');
+
+/**
+ * 通用的一次 AI 调用：负责连接、错误分类、取回文本。
+ *
+ * 说明：recognizeFood 里有一段同样的逻辑没有迁过来 ——
+ * 那是已经测通过的代码，不想为了「消除重复」而冒回归风险。
+ * 新功能统一走这里。
+ *
+ * @returns {Promise<string>} 模型返回的原始文本
+ */
+async function requestAI({
+  imageDataUrl, settings, systemPrompt, userText, fetchImpl = fetch, maxTokens = 2048,
+}) {
+  if (!imageDataUrl || !imageDataUrl.startsWith('data:image/')) {
+    throw new AIError('NO_IMAGE', '没有拿到图片，请重新拍一张或选一张。');
+  }
+  if (!settings.aiConsent) {
+    throw new AIError(
+      'NO_CONSENT',
+      '还没有同意把图片发给 AI。到「设置 → 拍照识别」里打开那个开关。',
+      { userFixable: true, shouldFallback: false },
+    );
+  }
+
+  const mode = settings.aiMode === 'direct' ? 'direct' : 'proxy';
+  const headers = { 'Content-Type': 'application/json' };
+  let url;
+
+  if (mode === 'direct') {
+    if (!settings.apiKey) {
+      throw new AIError(
+        'NO_API_KEY',
+        '还没有填 API Key。到「设置 → 拍照识别」里填入你自己的 DeepSeek API Key。',
+        { userFixable: true, shouldFallback: false },
+      );
+    }
+    url = (settings.apiUrl && settings.apiUrl.trim()) || DEEPSEEK_DIRECT_URL;
+    headers.Authorization = `Bearer ${settings.apiKey}`;
+  } else {
+    if (!settings.proxyUrl) {
+      throw new AIError(
+        'NO_PROXY_URL',
+        '还没有填服务地址。到「设置 → 拍照识别」里填入管理员给你的网址。',
+        { userFixable: true, shouldFallback: false },
+      );
+    }
+    url = settings.proxyUrl.trim();
+    if (settings.proxyCode) headers['X-Access-Code'] = settings.proxyCode;
+  }
+
+  const body = mode === 'proxy'
+    ? JSON.stringify({
+      image: imageDataUrl,
+      saveData: settings.saveData === true,
+      customPrompt: systemPrompt,
+      customText: userText,
+    })
+    : JSON.stringify({
+      model: VISION_MODEL,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: userText },
+            {
+              type: 'image_url',
+              // ⚠️ 图片必须在 user 消息里，放 system/assistant 会 400
+              image_url: { url: imageDataUrl, detail: settings.saveData ? 'low' : 'original' },
+            },
+          ],
+        },
+      ],
+      response_format: { type: 'json_object' },
+      max_tokens: maxTokens,
+      temperature: 0.1,
+    });
+
+  let response;
+  try {
+    response = await fetchImpl(url, { method: 'POST', headers, body });
+  } catch (err) {
+    throw new AIError('NETWORK', '网络请求失败，可能没联网或服务地址填错了。', { retryable: true });
+  }
+
+  let payload = null;
+  try { payload = await response.json(); } catch (err) { payload = null; }
+
+  if (!response.ok) {
+    const code = payload && payload.code;
+    const message = (payload && payload.error) || `服务返回错误 ${response.status}`;
+    let friendly = message;
+
+    if (mode === 'direct') {
+      if (response.status === 401 || response.status === 403) friendly = 'API Key 无效或已过期，请到设置里检查。';
+      else if (response.status === 402) friendly = 'DeepSeek 账户余额不足，请去充值。';
+      else if (response.status === 429) friendly = '请求太频繁，等一会儿再试。';
+    }
+
+    throw new AIError(code || `HTTP_${response.status}`, friendly, {
+      userFixable: code === 'BAD_ACCESS_CODE' || response.status === 401 || response.status === 403,
+      retryable: true,
+    });
+  }
+
+  const content = mode === 'proxy'
+    ? payload && payload.content
+    : payload && payload.choices && payload.choices[0]
+      && payload.choices[0].message && payload.choices[0].message.content;
+
+  if (!content || !String(content).trim()) {
+    throw new AIError(
+      'EMPTY_CONTENT',
+      'AI 这次没有返回内容（已知的偶发问题），再点一次就好。',
+      { retryable: true },
+    );
+  }
+
+  return String(content);
+}
+
+/** 从 AI 返回的 JSON 里取出课表。容错：剥 markdown、补截断。 */
+export function parseTimetableResult(raw) {
+  if (!raw) return null;
+
+  let text = String(raw).trim();
+
+  // 剥掉 ```json ... ```
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced) text = fenced[1].trim();
+
+  // 找到第一个 { 开始尝试解析
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+
+  const candidates = [text.slice(start)];
+
+  // 补上被截断的右括号
+  for (let extra = 1; extra <= 3; extra += 1) {
+    candidates.push(text.slice(start) + '}'.repeat(extra));
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const obj = JSON.parse(candidate);
+      if (obj && typeof obj === 'object') {
+        const courses = Array.isArray(obj.courses) ? obj.courses : [];
+        const noSlot = Array.isArray(obj.noSlotCourses) ? obj.noSlotCourses : [];
+        return {
+          courses,
+          noSlotCourses: noSlot,
+          weekdayHeaderDetected: obj.weekdayHeaderDetected !== false,
+          periodColumnDetected: obj.periodColumnDetected !== false,
+          confidence: typeof obj.confidence === 'number' ? obj.confidence : null,
+          notes: typeof obj.notes === 'string' ? obj.notes : '',
+        };
+      }
+    } catch (err) {
+      /* 试下一个 */
+    }
+  }
+  return null;
+}
+
+/**
+ * 识别一张课程表图片。
+ *
+ * @param {Object} opts
+ * @param {string} opts.imageDataUrl
+ * @param {Object} opts.settings
+ * @param {string} [opts.weekHint] 用户填的「这是第几周」，作为提示词辅助
+ * @param {Function} [opts.fetchImpl]
+ * @returns {Promise<{courses:Array, noSlotCourses:Array, meta:Object, raw:string}>}
+ */
+export async function recognizeTimetable({
+  imageDataUrl, settings, weekHint = '', fetchImpl = fetch,
+}) {
+  const userText = weekHint
+    ? `这是一张课程表。据用户说这是第 ${weekHint} 周。请按系统提示的 JSON 格式返回。`
+    : '这是一张课程表。请按系统提示的 JSON 格式返回。';
+
+  const raw = await requestAI({
+    imageDataUrl,
+    settings,
+    systemPrompt: TIMETABLE_PROMPT,
+    userText,
+    fetchImpl,
+    maxTokens: 3000,   // 课表可能十几门课，给足额度，否则 JSON 会被截断
+  });
+
+  const parsed = parseTimetableResult(raw);
+
+  if (!parsed) {
+    throw new AIError(
+      'UNPARSABLE',
+      'AI 返回的内容看不懂，再试一次可能会好。',
+      { retryable: true },
+    );
+  }
+
+  // 整张图没认出表头 → 很可能整体解析错了，直接拦下来
+  if (!parsed.weekdayHeaderDetected || !parsed.periodColumnDetected) {
+    throw new AIError(
+      'NOT_A_TIMETABLE',
+      '这张图里没有认出星期和节次，可能不是课程表、或者拍得太模糊。'
+        + '请换一张更清晰的截图，或者用「导入文件」。',
+      { retryable: true },
+    );
+  }
+
+  if (parsed.courses.length === 0) {
+    throw new AIError(
+      'NO_COURSE',
+      '没有识别出任何课程。请确认这张图是课表，并且格子里的字看得清。',
+      { retryable: true },
+    );
+  }
+
+  return {
+    courses: parsed.courses,
+    noSlotCourses: parsed.noSlotCourses,
+    meta: {
+      confidence: parsed.confidence,
+      notes: parsed.notes,
+      weekdayHeaderDetected: parsed.weekdayHeaderDetected,
+      periodColumnDetected: parsed.periodColumnDetected,
+    },
+    raw,
+  };
+}

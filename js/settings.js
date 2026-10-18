@@ -86,10 +86,61 @@ export function renderSettings() {
   if (!root) return;
   clear(root);
 
+  root.appendChild(buildTermSection());
   root.appendChild(buildAISection());
   root.appendChild(buildGoalSection());
   root.appendChild(buildStorageSection());
   root.appendChild(buildAboutSection());
+}
+
+/* ---------------------------------------------------------------- 学期 */
+
+/**
+ * 学期设置。
+ *
+ * 为什么需要「第 1 周的周一」：
+ *   周视图要显示「周一 12」这种日期，还要算出「现在是第几周」、
+ *   判断单双周。没有基准日期这些全算不出来。
+ */
+function buildTermSection() {
+  const card = el('div', { class: 'card' }, [
+    el('div', { class: 'card-title' }, ['📅', ' 学期设置']),
+  ]);
+
+  card.appendChild(el('div', { class: 'form-group' }, [
+    el('label', { class: 'form-label', for: 'termStartInput', text: '第 1 周的周一' }),
+    el('input', {
+      class: 'form-input',
+      id: 'termStartInput',
+      type: 'date',
+      value: settings.termStartDate || '',
+      onchange: (e) => persist({ termStartDate: e.target.value }, { notifyText: '已保存' }),
+    }),
+  ]));
+
+  card.appendChild(el('div', {
+    class: 'form-hint',
+    text: '用来算「现在是第几周」和显示每天日期。不确定就翻一下教务系统，'
+      + '看第 1 周是从哪天开始的。留空也能用，只是不显示日期。',
+  }));
+
+  const weekSelect = el('select', {
+    class: 'form-select',
+    id: 'totalWeeksInput',
+    onchange: (e) => persist({ totalWeeks: Number(e.target.value) }, { notifyText: '已保存' }),
+  });
+  [16, 17, 18, 19, 20, 21, 22].forEach((n) => {
+    const opt = el('option', { value: String(n), text: `${n} 周` });
+    if (Number(settings.totalWeeks) === n) opt.selected = true;
+    weekSelect.appendChild(opt);
+  });
+
+  card.appendChild(el('div', { class: 'form-group' }, [
+    el('label', { class: 'form-label', for: 'totalWeeksInput', text: '一学期共几周' }),
+    weekSelect,
+  ]));
+
+  return card;
 }
 
 /* ---------------------------------------------------------------- AI 识别 */

@@ -18,10 +18,11 @@ import {
 } from './utils.js';
 import { THEME_KEY } from './constants.js';
 import * as store from './store.js';
-import { initSchedule, renderCourses, checkReminder } from './schedule.js';
+import { initSchedule, renderSchedule, reloadCourses, checkReminder } from './schedule.js';
 import { initDiet, renderDiet, renderWeekly, getDietViewMode } from './diet.js';
 import { initJournal, renderJournal } from './journal.js';
 import { initSettings, openSettings } from './settings.js';
+import { initImport, openImportSheet } from './courseImport.js';
 
 /* ==================================================================== 反馈 */
 
@@ -228,7 +229,7 @@ function switchTab(name, { scrollTop = true } = {}) {
 
   // ---- 刷新该页数据
   if (name === 'schedule') {
-    renderCourses();
+    renderSchedule();
     checkReminder();
   } else if (name === 'diet') {
     if (getDietViewMode() === 'weekly') renderWeekly();
@@ -363,6 +364,13 @@ function boot() {
     initSchedule({ notify: feedback.notify, scheduleUndo: feedback.scheduleUndo });
     initDiet({ notify: feedback.notify, scheduleUndo: feedback.scheduleUndo });
     initJournal({ notify: feedback.notify, scheduleUndo: feedback.scheduleUndo });
+    // 课程导入：导入完成后要重画课程表（周视图 + 列表）
+    initImport({
+      notify: feedback.notify,
+      onImported: () => {
+        reloadCourses();
+      },
+    });
     // 设置模块：改动设置后要通知各页面刷新（比如换了热量目标，饮食页要重算）
     initSettings({
       onChange: () => {
@@ -372,7 +380,8 @@ function boot() {
           if (getDietViewMode() === 'weekly') renderWeekly();
           else renderDiet();
         } else if (activeTab === 'schedule') {
-          checkReminder();
+          // 学期设置改了（开学日期 / 总周数）会直接影响周视图
+          reloadCourses();
         }
       },
     });
@@ -380,6 +389,14 @@ function boot() {
     console.error('[boot] 模块初始化失败：', err);
     feedback.notify('部分功能初始化失败，请刷新页面', 5000);
   }
+
+  // 顶部「导入」按钮
+  $('#importBtn')?.addEventListener('click', () => openImportSheet());
+
+  // 周视图里的「还没设置开学日期」提示，点一下直接进设置
+  $('#weekSub')?.addEventListener('click', () => {
+    if ($('#weekSub')?.dataset.warn === '1') switchTab('settings');
+  });
 
   initTabs();
   initReminderLoop();
