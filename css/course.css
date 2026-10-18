@@ -136,58 +136,102 @@
 }
 
 /* ---- 网格主体
-   11 行 = 11 节课。行高固定 34px，一门 2 节的课就是 span 2，约 69px 高。
-   为什么不用 1fr 平分：那样每节会被拉到 50px 以上，
-   课程块显得比真实课表胖一圈，字上下的空白太多。                    */
+   改成**绝对定位 + 时间比例**（v3.2）。
+
+   为什么不再用 grid 按「每节一行」：
+   那样每节等高，课间 10 分钟、午休 2 小时、晚饭 1 小时全被压成 0，
+   两块相邻的课无缝贴在一起，看起来像连上 4 节 —— 用户反馈的
+   「课程块和时间对不上」就是这个。
+
+   现在：位置由课程的分钟数换算（见 weekGrid.js 的 makeTimeline），
+   午休/晚饭单独画成一条细带。                                  */
 .wk-body {
-  display: grid;
-  grid-template-columns: 28px repeat(7, 1fr);
-  grid-template-rows: repeat(11, 34px);
-  gap: 1.5px 0;
   position: relative;
+  margin-left: 28px;      /* 左边留出时间刻度的宽度 */
+  margin-top: 2px;
 }
 
-.wk-gridline {
-  border-top: 1px solid var(--border);
-  opacity: 0.45;
+/* 7 个日期列（背景与分隔虚线） */
+.wk-col {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-right: 1px dashed var(--border);
   pointer-events: none;
 }
 
-/* 节次标签：竖排。
-   26~28px 宽放不下「九十十一」这种 4 个字，横排会挤成一团。 */
-.wk-period {
-  writing-mode: vertical-rl;
-  text-orientation: upright;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.56rem;
-  letter-spacing: 0.05em;
+.wk-col:last-child {
+  border-right: none;
+}
+
+.wk-col.is-today {
+  background: rgba(74, 124, 111, 0.05);
+}
+
+/* 整点横线 */
+.wk-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--border);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* 左侧时间刻度（08 / 10 / 12 …），定位在对应的 y 上 */
+.wk-hour {
+  position: absolute;
+  left: -28px;
+  width: 24px;
+  text-align: right;
+  font-size: 0.58rem;
   color: var(--text-secondary);
-  text-align: center;
-  line-height: 1.1;
-  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+  transform: translateY(-50%);
+  pointer-events: none;
 }
 
-.wk-period.wide {
-  font-size: 0.5rem;
+/* 压缩带（午休 / 晚饭）：一条浅色细带，名字写在左侧刻度栏里，
+   免得压在课程块上 */
+.wk-break {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: var(--surface-alt);
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  pointer-events: none;
 }
 
-/* ---- 课程块 */
+.wk-break-label {
+  position: absolute;
+  left: -28px;
+  width: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: right;
+  font-size: 0.46rem;
+  color: var(--text-secondary);
+  opacity: 0.8;
+  white-space: nowrap;
+}
+
+/* ---- 课程块（绝对定位，top/height 由时间算出） */
 .wk-block {
-  position: relative;
-  margin: 0 1px;
+  position: absolute;
   border-radius: 5px;
   padding: 3px 3px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 0.5px;
   text-align: left;
   border: none;
   min-width: 0;
-  /* 保证触摸目标不因格子太小而失效 */
+  /* 保证触摸目标不至于小到点不中 */
   min-height: 20px;
+  z-index: 2;
 }
 
 .wk-block:active {
@@ -197,22 +241,45 @@
 .wk-name {
   font-size: 0.58rem;
   font-weight: 600;
-  line-height: 1.2;
+  line-height: 1.18;
   word-break: break-all;
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  flex: none;
 }
 
-.wk-teacher,
-.wk-room {
-  font-size: 0.52rem;
-  line-height: 1.25;
+/* 起止时间：直接写在块里，方便一眼核对「位置和时间是否一致」 */
+.wk-time {
+  font-size: 0.5rem;
+  line-height: 1.15;
+  opacity: 0.9;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  flex: none;
+  order: 3;              /* 放在教师/地点下面 */
+}
+
+.wk-meta {
+  font-size: 0.5rem;
+  line-height: 1.2;
   opacity: 0.86;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: none;
+  order: 2;
+}
+
+/* 短块（不到 42px）只留课程名，别把字挤成一团 */
+.wk-block.tiny .wk-meta {
+  display: none;
+}
+
+.wk-block.tiny .wk-time {
+  font-size: 0.46rem;
 }
 
 .wk-parity {
