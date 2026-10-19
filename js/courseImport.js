@@ -146,40 +146,80 @@ function buildOption({ icon, title, desc, onclick, primary }) {
 
 /* ============================================================ 图片 */
 
+/** 一次最多几张图（课表 + 作息时间表 + 备用） */
+const MAX_IMAGES = 4;
+
+/**
+ * 选好图片。
+ *
+ * 支持**一次多张**：一张课表 + 一张作息时间表。
+ * 为什么需要多张：课表上只写「第 3-4 节」，不写几点。
+ * 只有同时给 AI 作息时间表，它才能算出每节课的具体时间。
+ * 没有这个信息时，所有课只能落到内置默认作息上，很容易和真实课表错开。
+ */
 async function handleImagePick(event, label) {
   const input = event.target;
-  const file = input.files && input.files[0];
+  const files = Array.from(input.files || []);
   input.value = '';
-  if (!file) return;
+  if (!files.length) return;
 
-  if (!file.type.startsWith('image/')) {
-    deps.notify('请选一张图片');
+  const images = files.filter((f) => f.type.startsWith('image/'));
+  if (!images.length) {
+    deps.notify('请选图片文件');
     return;
+  }
+
+  if (images.length > MAX_IMAGES) {
+    deps.notify(`一次最多 ${MAX_IMAGES} 张，只取前 ${MAX_IMAGES} 张`);
   }
 
   showOverlay();
   renderBusy('正在准备图片…');
 
   try {
-    const compressed = await compressImage(file, 1024, 0.75);
-    renderImagePreview(compressed.dataUrl, label);
+    const list = [];
+    for (const file of images.slice(0, MAX_IMAGES)) {
+      // eslint-disable-next-line no-await-in-loop
+      const compressed = await compressImage(file, 1024, 0.75);
+      list.push(compressed.dataUrl);
+    }
+    renderImagePreview(list, label);
   } catch (err) {
     console.error('[import] 图片处理失败：', err);
     renderError('图片读不出来，请换一张。', () => renderChoose());
   }
 }
 
-function renderImagePreview(dataUrl, label) {
+/**
+ * 图片预览 + 开始识别。
+ * @param {string[]} images data URL 数组
+ */
+function renderImagePreview(images, label) {
   const root = panel();
   if (!root) return;
   clear(root);
   root.className = 'import-panel import-full';
 
-  root.appendChild(buildTopBar(`识别课程表`, `${label} · 第 2 步，共 3 步`, () => renderChoose()));
+  root.appendChild(buildTopBar('识别课程表', `${label} · 共 ${images.length} 张 · 第 2 步，共 3 步`, () => renderChoose()));
 
   const body = el('div', { class: 'import-scroll' });
-  body.appendChild(el('div', { class: 'import-photo' }, [
-    el('img', { src: dataUrl, alt: '课程表预览' }),
+
+  const strip = el('div', { class: 'import-photo-strip' });
+  images.forEach((src, i) => {
+    strip.appendChild(el('div', { class: 'import-photo-thumb' }, [
+      el('img', { src, alt: `第 ${i + 1} 张` }),
+      el('span', { class: 'import-photo-idx', text: String(i + 1) }),
+    ]));
+  });
+  body.appendChild(strip);
+
+  body.appendChild(el('div', { class: 'import-note' }, [
+    el('span', { text: '💡' }),
+    el('span', {
+      text: '建议再拍一张「作息时间表」（写着第 1 节 8:00–8:45 那种）。'
+        + '课表上通常只写「第 3-4 节」，不给作息表的话算不出具体几点上课。'
+        + '点「重选」可以一次选中多张。',
+    }),
   ]));
 
   const settings = store.loadSettings();
@@ -199,45 +239,64 @@ function renderImagePreview(dataUrl, label) {
 
   root.appendChild(body);
 
-  const footer = el('div', { class: 'import-footer' }, [
+  root.appendChild(el('div', { class: 'import-footer' }, [
     el('button', {
       type: 'button', class: 'btn btn-ghost', text: '重选', onclick: () => renderChoose(),
     }),
     el('button', {
       type: 'button',
       class: 'btn btn-primary',
-      text: ready ? '开始识别' : '去设置',
-      onclick: ready ? () => runRecognize(dataUrl) : () => {
+      text: ready ? `开始识别（${images.length} 张）` : '去设置',
+      onclick: ready ? () => runRecognize(images) : () => {
         closeOverlay();
         deps.notify('点右上角齿轮进入设置');
       },
     }),
-  ]);
-  root.appendChild(footer);
+  ]));
 }
 
-async function runRecognize(dataUrl) {
-  renderBusy('AI 正在读取星期和节次…', [
-    '图片已准备好',
-    '读取星期、节次和课程名',
-    '拆出教师与教室',
-    '等你确认',
-  ]);
+async function runRecognize(images) {
+  renderBusy(
+    images.length > 1 ? `AI 正在读这 ${images.length} 张图…` : 'AI 正在读取星期和节次…',
+    [
+      '图片已准备好',
+      '读取星期、节次和课程名',
+      '如果有作息表，换算每节课的具体时间',
+      '等你确认',
+    ],
+  );
 
   const settings = store.loadSettings();
 
   try {
-    const result = await recognizeTimetable({ imageDataUrl: dataUrl, settings });
+    const result = await recognizeTimetable({ images, settings });
     applyRecognized(result);
   } catch (err) {
     const message = err instanceof AIError ? err.message : `识别失败：${err.message}`;
-    renderError(message, () => renderImagePreview(dataUrl, '拍照'), '再试一次');
+    renderError(message, () => renderImagePreview(images, '拍照'), '再试一次');
   }
 }
 
 /** 把 AI 的结果转成待确认的课程 */
 function applyRecognized(result) {
   const list = [];
+
+  // ---- 先看 AI 有没有从「作息时间表」里读出每节课的时间
+  //      有的话存进设置，之后换算和提醒都用它，而不是内置默认作息。
+  let periodTimes = PERIOD_TIMES;
+  const aiPeriodTimes = Array.isArray(result.periodTimes) ? result.periodTimes : [];
+  if (aiPeriodTimes.length >= 2) {
+    const clean = aiPeriodTimes
+      .filter((p) => p && Number(p.period) >= 1 && p.start && p.end)
+      .map((p) => ({ period: Number(p.period), start: String(p.start), end: String(p.end) }))
+      .sort((a, b) => a.period - b.period);
+
+    if (clean.length >= 2) {
+      periodTimes = clean;
+      const settings = store.loadSettings();
+      store.saveSettings({ ...settings, periodTimes: clean });
+    }
+  }
 
   result.courses.forEach((raw) => {
     const name = String(raw.name || '').trim();
@@ -253,8 +312,8 @@ function applyRecognized(result) {
     if (!Number.isFinite(sp) || sp < 1) sp = 1;
     if (!Number.isFinite(ep) || ep < sp) ep = sp;
 
-    const t = PERIOD_TIMES.find((p) => p.period === sp);
-    const tEnd = PERIOD_TIMES.find((p) => p.period === ep);
+    const t = periodTimes.find((p) => p.period === sp);
+    const tEnd = periodTimes.find((p) => p.period === ep);
 
     list.push(makeCourse({
       name,
@@ -294,9 +353,16 @@ function applyRecognized(result) {
 
   // 整张图整体把握低时提醒一句
   const lowConfidence = typeof result.meta.confidence === 'number' && result.meta.confidence < 0.5;
+  const gotTimes = periodTimes !== PERIOD_TIMES;
 
-  renderConfirm(lowConfidence
-    ? 'AI 对这张图的整体把握不高，请重点核对每一门。' : '');
+  const notices = [];
+  if (lowConfidence) notices.push('AI 对这张图的整体把握不高，请重点核对每一门。');
+  if (!gotTimes) {
+    notices.push('这次没有认出「作息时间表」，第几节换算成了内置默认时间（第 1 节 08:00）。'
+      + '如果你们学校不是这个作息，时间会不准 —— 可以再拍一张作息表重新识别。');
+  }
+
+  renderConfirm(notices.join(' '));
 }
 
 /* ============================================================ 文件 / 粘贴 */
@@ -488,6 +554,23 @@ function renderConfirm(notice = '') {
       el('span', { text: flags.join('；') }),
     ]));
   }
+
+  /*
+   * 「星期/节次没读出来」的典型症状：好几门课挤在同一个时间。
+   * 真实课表里同一天同一时间最多重叠 2 门，出现 3 门以上基本就是解析错了。
+   * 这种情况导入进去，周视图会变成一坨重叠的色块 —— 必须在导入前拦住。
+   */
+  const congestion = detectCongestion(pending);
+  if (congestion) {
+    head.appendChild(el('div', { class: 'import-ch-danger' }, [
+      el('span', { text: '🚫' }),
+      el('div', {}, [
+        el('div', { class: 'import-danger-t', text: congestion.title }),
+        el('div', { class: 'import-danger-d', text: congestion.detail }),
+      ]),
+    ]));
+  }
+
   body.appendChild(head);
 
   const list = el('div', { class: 'import-list' });
@@ -720,6 +803,52 @@ function analyzeStatus(course, existing, batch) {
   }
 
   return 'ok';
+}
+
+/**
+ * 检测「星期/节次没读出来」的典型症状。
+ *
+ * 真实课表里同一天同一时间最多撞 2 门（比如正课 + 实验），
+ * 出现 3 门以上挤在同一格，基本就是解析出错（所有课都退化成默认值）。
+ * 这种情况直接导入，周视图会变成一坨重叠的色块。
+ *
+ * @returns {{title:string, detail:string}|null}
+ */
+function detectCongestion(pendingList) {
+  const list = pendingList.filter((x) => x.course && !x.course.noSlot);
+  if (list.length < 3) return null;
+
+  // 1. 同一 (星期, 开始节次/开始时间) 挤了几门
+  const buckets = {};
+  list.forEach(({ course }) => {
+    const key = `${Number(course.day)}|${course.startPeriod || course.start || ''}`;
+    buckets[key] = (buckets[key] || 0) + 1;
+  });
+
+  const worst = Object.entries(buckets).sort((a, b) => b[1] - a[1])[0];
+  if (worst && worst[1] >= 3) {
+    const [key] = worst;
+    const [day, slot] = key.split('|');
+    const dayName = WEEKDAY_NAMES[Number(day)] || '某天';
+    const slotName = /^\d+$/.test(slot) ? `第 ${slot} 节` : (slot || '同一个时间');
+    return {
+      title: `有 ${worst[1]} 门课被放到了「${dayName} ${slotName}」`,
+      detail: '正常课表不会这样，多半是星期或节次没读出来（全部退成了默认值）。'
+        + '请点每行的「改」核对星期和节次；也可以取消勾选后改用「粘贴文本」导入。',
+    };
+  }
+
+  // 2. 所有课都落在同一天
+  const days = new Set(list.map((x) => Number(x.course.day)));
+  if (days.size === 1 && list.length >= 4) {
+    return {
+      title: `所有 ${list.length} 门课都在 ${WEEKDAY_NAMES[Number(list[0].course.day)] || '同一天'}`,
+      detail: '正常课表通常会分布在多天。这很可能是只读到了课名、没读到星期。'
+        + '请核对后再导入。',
+    };
+  }
+
+  return null;
 }
 
 /* ============================================================ 写入 */

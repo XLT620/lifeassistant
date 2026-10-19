@@ -522,7 +522,9 @@ export async function testConnection(settings, fetchImpl = fetch) {
  *   3. 必须说清「认不出来时怎么返回」，否则它会瞎编
  */
 const TIMETABLE_PROMPT = [
-  '你是课程表识别助手。用户会给你一张大学课程表的截图或照片。',
+  '你是课程表识别助手。用户会给你 1~4 张图片，通常包括：',
+  '  · 一张课表（格子里的文字形如「课程名-教师@地点」）',
+  '  · 可能还有一张「作息时间表」（写着第 1 节 08:00-08:45 这种）',
   '',
   '只输出一个 JSON 对象，不要解释文字，不要用 markdown 代码围栏。',
   '',
@@ -542,6 +544,10 @@ const TIMETABLE_PROMPT = [
   '  "noSlotCourses": [',
   '    { "name": "军事技能", "code": "B29800001", "weeks": "1" }',
   '  ],',
+  '  "periodTimes": [',
+  '    { "period": 1, "start": "08:00", "end": "08:45" },',
+  '    { "period": 2, "start": "08:55", "end": "09:40" }',
+  '  ],',
   '  "weekdayHeaderDetected": true,',
   '  "periodColumnDetected": true,',
   '  "confidence": 0.85,',
@@ -558,13 +564,22 @@ const TIMETABLE_PROMPT = [
   '- noSlotCourses：课表底部单独列出、**没有具体星期和节次**的课（如军训、劳动教育、入学教育）。',
   '  这些只填 name / code / weeks。',
   '',
+  '★ periodTimes 是这次最重要的字段：',
+  '  如果图片里**有作息时间表 / 上课时间表**，请把每一节的开始和结束时间都读出来，',
+  '  放进 periodTimes（至少覆盖课表里用到的节次）。这是唯一能知道「第 3 节到底几点」的来源。',
+  '  如果图片里**没有**作息时间表，就返回空数组 []，不要凭猜测编时间。',
+  '',
   '⚠️ 重要规则：',
   '1. 一格里的文字形如「课程名-教师@地点」，请拆成三个字段。',
   '2. 如果一格里有多个教师（用逗号分隔），teacher 里原样保留。',
   '3. 如果认不出某个格子，宁可不返回这一门，也不要编造。',
-  '4. 如果整张图看不清、或者不是课程表，返回 {"courses":[],"noSlotCourses":[],"weekdayHeaderDetected":false,"periodColumnDetected":false,"confidence":0,"notes":"看不清"}',
-  '5. weekdayHeaderDetected = 有没有认出「周一/周二…」这一行表头。',
-  '6. periodColumnDetected = 有没有认出「一二节/三四节…」这一列行标题。',
+  '4. 多张图时请**合并**结果：课表给课程，作息表给 periodTimes，不要重复输出同一门课。',
+  '5. 如果整张图看不清、或者不是课程表，返回',
+  '   {"courses":[],"noSlotCourses":[],"periodTimes":[],"weekdayHeaderDetected":false,"periodColumnDetected":false,"confidence":0,"notes":"看不清"}',
+  '6. weekdayHeaderDetected = 有没有认出「周一/周二…」这一行表头。',
+  '7. periodColumnDetected = 有没有认出「一二节/三四节…」这一列行标题。',
+  '8. 星期和节次**必须来自图片**。如果图上看不出是星期几，就不要返回这门课 ——',
+  '   千万不要把不确定的课全塞进「周一 第1节」，那会让整个课表全部重叠。',
 ].join('\n');
 
 /**
@@ -577,9 +592,14 @@ const TIMETABLE_PROMPT = [
  * @returns {Promise<string>} 模型返回的原始文本
  */
 async function requestAI({
-  imageDataUrl, settings, systemPrompt, userText, fetchImpl = fetch, maxTokens = 2048,
+  images, imageDataUrl, settings, systemPrompt, userText, fetchImpl = fetch, maxTokens = 2048,
 }) {
-  if (!imageDataUrl || !imageDataUrl.startsWith('data:image/')) {
+  // 允许传单张（imageDataUrl）或多张（images）
+  const list = (Array.isArray(images) && images.length)
+    ? images.filter((x) => typeof x === 'string' && x.startsWith('data:image/'))
+    : (imageDataUrl && imageDataUrl.startsWith('data:image/') ? [imageDataUrl] : []);
+
+  if (!list.length) {
     throw new AIError('NO_IMAGE', '没有拿到图片，请重新拍一张或选一张。');
   }
   if (!settings.aiConsent) {
@@ -616,9 +636,13 @@ async function requestAI({
     if (settings.proxyCode) headers['X-Access-Code'] = settings.proxyCode;
   }
 
+  const detail = settings.saveData ? 'low' : 'original';
+
   const body = mode === 'proxy'
     ? JSON.stringify({
-      image: imageDataUrl,
+      // 多张图时传 images；单张时也带上，兼容旧版 Worker
+      images: list,
+      image: list[0],
       saveData: settings.saveData === true,
       customPrompt: systemPrompt,
       customText: userText,
@@ -631,11 +655,11 @@ async function requestAI({
           role: 'user',
           content: [
             { type: 'text', text: userText },
-            {
+            // ⚠️ 图片必须在 user 消息里，放 system/assistant 会 400
+            ...list.map((src) => ({
               type: 'image_url',
-              // ⚠️ 图片必须在 user 消息里，放 system/assistant 会 400
-              image_url: { url: imageDataUrl, detail: settings.saveData ? 'low' : 'original' },
-            },
+              image_url: { url: src, detail },
+            })),
           ],
         },
       ],
@@ -714,9 +738,11 @@ export function parseTimetableResult(raw) {
       if (obj && typeof obj === 'object') {
         const courses = Array.isArray(obj.courses) ? obj.courses : [];
         const noSlot = Array.isArray(obj.noSlotCourses) ? obj.noSlotCourses : [];
+        const periodTimes = Array.isArray(obj.periodTimes) ? obj.periodTimes : [];
         return {
           courses,
           noSlotCourses: noSlot,
+          periodTimes,
           weekdayHeaderDetected: obj.weekdayHeaderDetected !== false,
           periodColumnDetected: obj.periodColumnDetected !== false,
           confidence: typeof obj.confidence === 'number' ? obj.confidence : null,
@@ -731,24 +757,43 @@ export function parseTimetableResult(raw) {
 }
 
 /**
- * 识别一张课程表图片。
+ * 识别课程表。
+ *
+ * 支持**多张图**：一张课表 + 一张作息时间表。
+ * 为什么需要作息表：课表上只写「第 3-4 节」，不写几点。
+ * 只有拿到作息表，才能算出每节课的具体时间，周视图才不会和真实时间错开。
  *
  * @param {Object} opts
- * @param {string} opts.imageDataUrl
+ * @param {string[]} [opts.images]       多张图（推荐）
+ * @param {string}   [opts.imageDataUrl] 单张图（兼容旧调用）
  * @param {Object} opts.settings
- * @param {string} [opts.weekHint] 用户填的「这是第几周」，作为提示词辅助
+ * @param {string} [opts.weekHint]
  * @param {Function} [opts.fetchImpl]
- * @returns {Promise<{courses:Array, noSlotCourses:Array, meta:Object, raw:string}>}
+ * @returns {Promise<{courses:Array, noSlotCourses:Array, periodTimes:Array, meta:Object, raw:string}>}
  */
 export async function recognizeTimetable({
-  imageDataUrl, settings, weekHint = '', fetchImpl = fetch,
+  images, imageDataUrl, settings, weekHint = '', fetchImpl = fetch,
 }) {
-  const userText = weekHint
-    ? `这是一张课程表。据用户说这是第 ${weekHint} 周。请按系统提示的 JSON 格式返回。`
-    : '这是一张课程表。请按系统提示的 JSON 格式返回。';
+  const list = (Array.isArray(images) && images.length)
+    ? images
+    : (imageDataUrl ? [imageDataUrl] : []);
+
+  if (!list.length) {
+    throw new AIError('NO_IMAGE', '没有拿到图片，请重新拍一张或选一张。');
+  }
+
+  const countText = list.length > 1
+    ? `一共 ${list.length} 张图。请把课表和作息时间表的信息合并成一份结果。`
+    : '这是一张课程表。';
+
+  const userText = [
+    countText,
+    weekHint ? `据用户说这是第 ${weekHint} 周。` : '',
+    '请按系统提示的 JSON 格式返回；如果图里有作息时间表，务必把 periodTimes 填上。',
+  ].filter(Boolean).join('');
 
   const raw = await requestAI({
-    imageDataUrl,
+    images: list,
     settings,
     systemPrompt: TIMETABLE_PROMPT,
     userText,
@@ -787,6 +832,7 @@ export async function recognizeTimetable({
   return {
     courses: parsed.courses,
     noSlotCourses: parsed.noSlotCourses,
+    periodTimes: parsed.periodTimes,
     meta: {
       confidence: parsed.confidence,
       notes: parsed.notes,

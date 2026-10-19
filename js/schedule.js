@@ -77,6 +77,25 @@ function bindWeekNav() {
     weekOffset = 0;
     renderWeek();
   });
+
+  // 课程表页里直接填「课表第 1 周的周一」
+  $('#weekSetupSave')?.addEventListener('click', () => {
+    const input = $('#weekSetupDate');
+    const value = input ? input.value : '';
+    if (!value) {
+      deps.notify('请先选一个日期');
+      return;
+    }
+    const settings = store.loadSettings();
+    const result = store.saveSettings({ ...settings, timetableStartDate: value });
+    if (!result.ok) {
+      deps.notify('保存失败，请重试');
+      return;
+    }
+    weekOffset = 0;
+    deps.notify('已保存，周次和日期会对上了');
+    renderWeek();
+  });
 }
 
 /**
@@ -139,7 +158,7 @@ function renderWeek() {
     const hasBase = settings.timetableStartDate || settings.termStartDate;
 
     if (!hasBase) {
-      subEl.textContent = '还没设置课表开始日期，先按第 1 周显示 · 点这里去设置';
+      subEl.textContent = '还没设置课表开始日期，先按第 1 周显示';
       subEl.dataset.warn = '1';
     } else {
       delete subEl.dataset.warn;
@@ -165,6 +184,17 @@ function renderWeek() {
   // 「回到本周」按钮只在不是本周时出现
   const todayBtn = $('#weekTodayBtn');
   if (todayBtn) todayBtn.hidden = week === base;
+
+  // 没有基准日期时，把输入框直接摆在课程表页上（藏在设置里用户找不到）
+  const setup = $('#weekSetup');
+  if (setup) {
+    const needSetup = !(settings.timetableStartDate || settings.termStartDate);
+    setup.hidden = !needSetup;
+    if (needSetup) {
+      const dateInput = $('#weekSetupDate');
+      if (dateInput && !dateInput.value) dateInput.value = settings.timetableStartDate || '';
+    }
+  }
 
   renderWeekGrid(root, {
     courses,
