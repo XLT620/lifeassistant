@@ -179,6 +179,27 @@
           </button>
         </div>
 
+        <!--
+          没设置课表基准日期时，这里直接让你填，不用翻到设置页。
+          之前这个输入框只藏在「设置 → 学期设置」里，用户找不到。
+        -->
+        <div class="week-setup" id="weekSetup" hidden>
+          <div class="week-setup-title">📅 先告诉我课表第 1 周是哪天</div>
+          <div class="week-setup-desc">
+            周视图要显示每天的日期、判断现在是第几周、算单双周，都要靠这个日期。
+            翻一下教务系统，看「第 1 周」是从哪个周一开始的。
+          </div>
+          <div class="week-setup-row">
+            <input type="date" class="form-input" id="weekSetupDate"
+                   aria-label="课表第 1 周的周一">
+            <button type="button" class="btn btn-primary btn-sm" id="weekSetupSave">保存</button>
+          </div>
+          <div class="week-setup-hint">
+            如果开学后先军训、课表晚几周才开始，保存后再到「设置 → 学期设置」
+            补填教务处的开学日期，就能额外看到「学期第几周」。
+          </div>
+        </div>
+
         <!-- 周次导航 -->
         <div class="week-nav" id="weekNav">
           <button type="button" class="week-arrow" id="weekPrev" aria-label="上一周">‹</button>
@@ -476,10 +497,12 @@
   <div class="import-panel" id="importPanel"></div>
 </div>
 
-<!-- 三种文件输入（都由 JS 触发） -->
-<input type="file" accept="image/*" capture="environment"
+<!-- 三种文件输入（都由 JS 触发）
+     multiple：拍照识别支持一次给多张图 —— 一张课表 + 一张作息时间表，
+     这样 AI 才能知道「第 3 节」到底几点上课。 -->
+<input type="file" accept="image/*" capture="environment" multiple
        id="importCameraInput" class="visually-hidden" tabindex="-1">
-<input type="file" accept="image/*"
+<input type="file" accept="image/*" multiple
        id="importAlbumInput" class="visually-hidden" tabindex="-1">
 <input type="file" accept=".csv,.txt,.ics,.xlsx"
        id="importFileInput" class="visually-hidden" tabindex="-1">
