@@ -75,11 +75,15 @@ export function initDiet(dependencies) {
   });
 
   // ---- 周历导航
-  $('#weekPrev')?.addEventListener('click', () => {
+  // ⚠️ 必须用 dietWeekPrev / dietWeekNext 这两个带前缀的 id。
+  //    以前用的是 weekPrev / weekNext，和课程表周视图的按钮 id 撞了，
+  //    结果两个模块的监听器绑在同一组按钮上：点课程表的翻周按钮会顺带
+  //    重画饮食页周历，而饮食页自己的「上周/下周」点了没反应。
+  $('#dietWeekPrev')?.addEventListener('click', () => {
     weekOffset -= 1;
     renderWeekly();
   });
-  $('#weekNext')?.addEventListener('click', () => {
+  $('#dietWeekNext')?.addEventListener('click', () => {
     // [修复] 不允许翻到未来
     if (weekOffset >= 0) {
       deps.notify('已经是本周了');
@@ -889,14 +893,14 @@ export function renderWeekly() {
   const weekStart = addDays(startOfWeekMonday(), weekOffset * 7);
   const weekEnd = addDays(weekStart, 6);
 
-  const labelEl = $('#weekLabel');
+  const labelEl = $('#dietWeekLabel');
   if (labelEl) {
     labelEl.textContent = `${weekStart.getMonth() + 1}/${weekStart.getDate()}`
       + ` — ${weekEnd.getMonth() + 1}/${weekEnd.getDate()}`;
   }
 
   // 「下周」在本周时禁用
-  const nextBtn = $('#weekNext');
+  const nextBtn = $('#dietWeekNext');
   if (nextBtn) nextBtn.disabled = weekOffset >= 0;
 
   const settings = store.loadSettings();

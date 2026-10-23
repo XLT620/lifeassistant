@@ -269,17 +269,56 @@ function snapToMonday(date) {
 }
 
 /**
- * 取出「课表基准日期」：优先 timetableStartDate，没填就退回 termStartDate。
- * 返回值已经对齐到周一，只填一个也能用。
+ * 取出「学期第 1 周的周一」。
+ *
+ * 规则（用户明确要求）：**开学日所在的那一周**才算学期第 1 周。
+ * 开学日可能是周三、周六，无所谓，取它所在那一周的周一。
  */
-export function resolveTimetableStart(settings = {}) {
-  const raw = parseDate(settings.timetableStartDate) || parseDate(settings.termStartDate);
-  return raw ? snapToMonday(raw) : null;
+export function termMonday(settings = {}) {
+  const d = parseDate(settings.termStartDate);
+  return d ? snapToMonday(d) : null;
 }
 
 /**
- * 某一周对应的日期范围（周一到周日）。
- * 用于在周次下面显示「10/12 – 10/18」，方便和教务系统对一眼。
+ * 取出「课表实施第一周的周一」。
+ * 教务处的开学周 ≠ 课表实际开始上课的那一周（中间可能夹军训）。
+ * 没填就当作和开学周同一周。
+ */
+export function timetableMonday(settings = {}) {
+  const t = parseDate(settings.timetableStartDate);
+  if (t) return snapToMonday(t);
+  return termMonday(settings);
+}
+
+/**
+ * 课表标签上的「第几周」比学期周次小几周。
+ *
+ * 例：开学日 9/5（周六）→ 开学周周一是 8/31，这一周 = 学期第 1 周；
+ *     课表实施第一周周一是 9/7 → 落在学期第 2 周。
+ *     于是「课表第 1 周」= 学期第 2 周，offset = 1。
+ *
+ * 课程数据里的 weeks（3-8、13-16）是**课表周次**，
+ * 判断「某一周有没有这门课」时统一换算：课表周 = 学期周 − offset。
+ */
+export function timetableOffsetWeeks(settings = {}) {
+  const term = termMonday(settings);
+  const start = timetableMonday(settings);
+  if (!term || !start) return 0;
+  const diff = Math.round((start.getTime() - term.getTime()) / (7 * 24 * 3600 * 1000));
+  return Math.max(0, diff);
+}
+
+/**
+ * 基准日期：优先开学周周一，没填就用课表第一周周一。
+ * 返回值已经对齐到周一。
+ */
+export function resolveTimetableStart(settings = {}) {
+  return termMonday(settings) || timetableMonday(settings);
+}
+
+/**
+ * 某一周（**学期周次**）对应的日期范围（周一到周日）。
+ * 显示在周次下面，方便和教务系统对一眼。
  */
 export function weekDateRange(settings = {}, week = 1) {
   const start = resolveTimetableStart(settings);
@@ -298,7 +337,10 @@ function weeksSince(start) {
   return Math.max(1, diff + 1);
 }
 
-/** 今天是课表的第几周。没有基准日期时返回 1。 */
+/**
+ * 今天是**学期第几周**（第 1 周 = 开学日所在的那一周）。
+ * 没有基准日期时返回 1。
+ */
 export function currentWeek(settings = {}) {
   return weeksSince(resolveTimetableStart(settings)) ?? 1;
 }
@@ -359,7 +401,21 @@ export function renderWeekGrid(root, opts) {
   const start = resolveTimetableStart(settings);
   // 用户/AI 提供的真实作息表（各校第 1 节时间不同），没有就用内置默认
   const periodTimes = getPeriodTimes(settings);
-  const weekCourses = courses.filter((c) => !c.noSlot && isCourseInWeek(c, week));
+
+  /*
+   * 周次换算：课程的 weeks（3-8、13-16）是**课表周次**，
+   * 而界面上的 week 是**学期周次**（第 1 周 = 开学日那一周）。
+   * 两者的差就是 offset。
+   *
+   * ★ 当 offset > 0 时，开学后的头几周 teachingWeek <= 0：
+   *   那几周本来就不该有课（课表还没开始执行），这是正确行为。
+   */
+  const offset = timetableOffsetWeeks(settings);
+  const teachingWeek = Number(week) - offset;
+
+  const weekCourses = teachingWeek >= 1
+    ? courses.filter((c) => !c.noSlot && isCourseInWeek(c, teachingWeek))
+    : [];
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -473,7 +529,14 @@ export function renderWeekGrid(root, opts) {
 
   Object.keys(byDay).forEach((dayKey) => {
     const list = byDay[dayKey];
-    list.sort((a, b) => (a.mins.start - b.mins.start) || (b.mins.end - a.mins.end));
+    /*
+     * 排序：先按开始时间，同一时间再按**周次先后**。
+     * 这样「周一第1节：劳动教育 3-8 周 / 形势与政策 13-16 周」并排时，
+     * 劳动教育在左边（先上的课在前），而不是随机顺序。
+     */
+    list.sort((a, b) => (a.mins.start - b.mins.start)
+      || ((Number(a.course.startWeek) || 1) - (Number(b.course.startWeek) || 1))
+      || (b.mins.end - a.mins.end));
 
     // 1. 先切成互不重叠的簇
     const clusters = [];

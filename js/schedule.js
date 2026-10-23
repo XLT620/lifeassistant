@@ -13,7 +13,7 @@ import {
 import { STORAGE_KEYS, WEEKDAY_NAMES } from './constants.js';
 import * as store from './store.js';
 import {
-  renderWeekGrid, currentWeek, currentTermWeek, weekDateRange,
+  renderWeekGrid, currentWeek, weekDateRange, timetableOffsetWeeks,
 } from './weekGrid.js';
 
 /* ---------------------------------------------------------------- 状态 */
@@ -25,8 +25,17 @@ let deps = { notify: () => {}, scheduleUndo: () => {} };
 /** 'week' = 周视图（默认），'list' = 原来的列表 + 添加表单 */
 let viewMode = 'week';
 
-/** 相对「本周」的偏移：0 = 本周，-1 = 上一周，1 = 下一周 */
-let weekOffset = 0;
+/**
+ * 当前显示的是**第几周（学期周次，绝对）**。
+ * null = 跟随「本周」（打开时自动定位到今天所在周）。
+ *
+ * ⚠️ 以前用的是「相对本周的偏移」，配合
+ *     week = min(总周数, 本周 + 偏移) 来计算。
+ *     如果「本周」算出来比总周数还大（课表起始日填得早、或总周数填得小），
+ *     min() 会永远返回总周数 —— 往前翻不动，**本周之后的课就永远看不到**。
+ *     改成绝对周次后，1..总周数 每一周都翻得到。
+ */
+let viewWeek = null;
 
 /* ---------------------------------------------------------------- 初始化 */
 
@@ -60,41 +69,65 @@ function bindViewSwitch() {
 }
 
 function bindWeekNav() {
-  $('#weekPrev')?.addEventListener('click', () => {
-    weekOffset -= 1;
-    renderWeek();
-  });
-  $('#weekNext')?.addEventListener('click', () => {
-    // 不允许翻到「未来太多」—— 停在课程可能存在的范围（当前周 + 总周数）
+  /** 当前实际显示的周（解析成绝对周次，并夹在 1..总周数 之间） */
+  const currentShownWeek = () => {
     const settings = store.loadSettings();
-    const maxOffset = Math.max(0, (Number(settings.totalWeeks) || 20) - 1);
-    if (weekOffset >= maxOffset) {
-      deps.notify('已经翻到最后一周了');
+    const total = Math.max(1, Number(settings.totalWeeks) || 20);
+    const base = Math.min(total, Math.max(1, currentWeek(settings)));
+    if (viewWeek === null) return base;
+    return Math.min(total, Math.max(1, viewWeek));
+  };
+
+  $('#weekPrev')?.addEventListener('click', () => {
+    const w = currentShownWeek();
+    if (w <= 1) {
+      deps.notify('已经是第 1 周（开学那周）了');
       return;
     }
-    weekOffset += 1;
-    renderWeek();
-  });
-  $('#weekTodayBtn')?.addEventListener('click', () => {
-    weekOffset = 0;
+    viewWeek = w - 1;
     renderWeek();
   });
 
-  // 课程表页里直接填「课表第 1 周的周一」
-  $('#weekSetupSave')?.addEventListener('click', () => {
-    const input = $('#weekSetupDate');
-    const value = input ? input.value : '';
-    if (!value) {
-      deps.notify('请先选一个日期');
+  $('#weekNext')?.addEventListener('click', () => {
+    const settings = store.loadSettings();
+    const total = Math.max(1, Number(settings.totalWeeks) || 20);
+    const w = currentShownWeek();
+    if (w >= total) {
+      deps.notify(`已经是最后一周了（共 ${total} 周）`);
       return;
     }
+    viewWeek = w + 1;
+    renderWeek();
+  });
+
+  $('#weekTodayBtn')?.addEventListener('click', () => {
+    viewWeek = null;       // 跟随本周
+    renderWeek();
+  });
+
+  // 课程表页里直接填「开学日期」/「课表第一周的周一」
+  $('#weekSetupSave')?.addEventListener('click', () => {
+    const termInput = $('#weekSetupTermDate');
+    const startInput = $('#weekSetupDate');
+    const termValue = termInput ? termInput.value : '';
+    const startValue = startInput ? startInput.value : '';
+
+    if (!termValue && !startValue) {
+      deps.notify('请至少选一个日期');
+      return;
+    }
+
     const settings = store.loadSettings();
-    const result = store.saveSettings({ ...settings, timetableStartDate: value });
+    const next = { ...settings };
+    if (termValue) next.termStartDate = termValue;
+    if (startValue) next.timetableStartDate = startValue;
+
+    const result = store.saveSettings(next);
     if (!result.ok) {
       deps.notify('保存失败，请重试');
       return;
     }
-    weekOffset = 0;
+    viewWeek = null;
     deps.notify('已保存，周次和日期会对上了');
     renderWeek();
   });
@@ -142,12 +175,23 @@ function renderWeek() {
 
   const settings = store.loadSettings();
 
-  // 「今天在课表的第几周」用课表基准日期（timetableStartDate），
-  // 不是教务处的开学日期 —— 两者可能差几周（军训那种）。
-  const base = currentWeek(settings);
-  const termWeek = currentTermWeek(settings);
-  const totalWeeks = Number(settings.totalWeeks) || 20;
-  const week = Math.min(totalWeeks, Math.max(1, base + weekOffset));
+  /*
+   * 周次语义（按用户要求）：
+   *   · 显示的是**学期周次**，第 1 周 = 开学日所在的那一周
+   *   · 课表标签上的「第 k 周」= 学期第 (k + offset) 周
+   *     （开学周与课表实施周不同周时 offset > 0）
+   *   · 只能看 1..总周数，学期外不显示
+   */
+  const totalWeeks = Math.max(1, Number(settings.totalWeeks) || 20);
+  const rawBase = currentWeek(settings);                    // 今天实际是第几周（可能超出学期）
+  const inTerm = rawBase >= 1 && rawBase <= totalWeeks;
+  const base = Math.min(totalWeeks, Math.max(1, rawBase));
+  const week = viewWeek === null
+    ? base
+    : Math.min(totalWeeks, Math.max(1, viewWeek));
+
+  const offset = timetableOffsetWeeks(settings);
+  const courseWeek = week - offset;      // 对应课表上的第几周
 
   const labelEl = $('#weekLabel');
   const subEl = $('#weekSub');
@@ -157,48 +201,53 @@ function renderWeek() {
   }
 
   if (subEl) {
-    const hasBase = settings.timetableStartDate || settings.termStartDate;
+    const hasBase = settings.termStartDate || settings.timetableStartDate;
 
     if (!hasBase) {
-      subEl.textContent = '还没设置课表开始日期，先按第 1 周显示';
+      subEl.textContent = '还没设置开学日期，先按第 1 周显示';
       subEl.dataset.warn = '1';
     } else {
       delete subEl.dataset.warn;
 
       const parts = [];
-      parts.push(week === base
-        ? '本周'
-        : (week < base ? `比本周早 ${base - week} 周` : `比本周晚 ${week - base} 周`));
+      if (!inTerm) {
+        // 今天已经超出学期范围（比如开学日填得很早、或学期已结束）。
+        // 这时不能标「本周」，否则会误导。
+        parts.push(rawBase > totalWeeks ? '学期已结束' : '还没开学');
+      } else {
+        parts.push(week === base
+          ? '本周'
+          : (week < base ? `比本周早 ${base - week} 周` : `比本周晚 ${week - base} 周`));
+      }
 
-      // 显示这一周的日期范围，方便和教务系统核对「周次 ↔ 日期」
+      // 这一周的日期范围，方便和教务系统核对「周次 ↔ 日期」
       const range = weekDateRange(settings, week);
       if (range) parts.push(`${range.from}–${range.to}`);
       parts.push(`共 ${totalWeeks} 周`);
 
-      // 如果填了两个日期，顺便告一下对应学期的第几周，方便核对
-      if (termWeek !== null && settings.timetableStartDate) {
-        const academicWeek = termWeek + (week - base);
-        if (academicWeek !== week) {
-          parts.push(`学期第 ${academicWeek} 周`);
-        }
+      // 开学周 ≠ 课表实施周时，额外标出「课表第几周」
+      if (offset > 0) {
+        parts.push(courseWeek >= 1 ? `课表第 ${courseWeek} 周` : '课表还没开始');
       }
 
       subEl.textContent = parts.join(' · ');
     }
   }
 
-  // 「回到本周」按钮只在不是本周时出现
+  // 「回到本周」按钮只在「今天在学期内、且当前不是本周」时出现
   const todayBtn = $('#weekTodayBtn');
-  if (todayBtn) todayBtn.hidden = week === base;
+  if (todayBtn) todayBtn.hidden = !inTerm || week === base;
 
   // 没有基准日期时，把输入框直接摆在课程表页上（藏在设置里用户找不到）
   const setup = $('#weekSetup');
   if (setup) {
-    const needSetup = !(settings.timetableStartDate || settings.termStartDate);
+    const needSetup = !(settings.termStartDate || settings.timetableStartDate);
     setup.hidden = !needSetup;
     if (needSetup) {
-      const dateInput = $('#weekSetupDate');
-      if (dateInput && !dateInput.value) dateInput.value = settings.timetableStartDate || '';
+      const termInput = $('#weekSetupTermDate');
+      const startInput = $('#weekSetupDate');
+      if (termInput && !termInput.value) termInput.value = settings.termStartDate || '';
+      if (startInput && !startInput.value) startInput.value = settings.timetableStartDate || '';
     }
   }
 

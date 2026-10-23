@@ -19,7 +19,7 @@ import {
 import * as store from './store.js';
 import { recognizeTimetable, AIError } from './ai.js';
 import {
-  parseText, parseXLSX, makeCourse, parseWeeks,
+  parseText, parseXLSX, makeCourse, parseWeeks, isCourseInWeek,
 } from './parseTable.js';
 
 /* ---------------------------------------------------------------- 状态 */
@@ -142,6 +142,76 @@ function buildOption({ icon, title, desc, onclick, primary }) {
     ]),
     el('span', { class: 'import-opt-chev', text: '›' }),
   ]);
+}
+
+/* ============================================================ 学期边界 */
+
+/**
+ * 把课程周次裁进学期范围内，并给「没写周次」的课一个明确的整学期区间。
+ *
+ * 为什么必须做：
+ *   1. 用户要求「课表的作用时间是整个学期，学期外不要出现课程」。
+ *      如果某门课写了 1-20 周而学期只有 18 周，就要裁到 18。
+ *   2. 以前的实现里「周次为空」用 endWeek=0 表示，语义是「永远显示」，
+ *      结果第 30 周、第 99 周都还会画出来。现在改成显式的 1..总周数。
+ *
+ * ⚠️ 注意区分两种情况：
+ *   · 整格子完全没写周次 → 按整学期（1..总周数）
+ *   · 同格子里别的课写了周次、这门没写 → 仍然按整学期，
+ *     但「没被任何课覆盖的周次」自然就是空的（这是周次分段模型的天然结果）
+ *
+ * @param {Object} course 课程对象（会被就地修改）
+ * @param {number} totalWeeks
+ * @returns {Object} 同一个对象
+ */
+function applySemesterBounds(course, totalWeeks) {
+  const total = Math.max(1, Number(totalWeeks) || 20);
+  const hasWeeks = Boolean(course.weeks && String(course.weeks).trim());
+
+  if (!hasWeeks) {
+    course.startWeek = 1;
+    course.endWeek = total;
+    course.weeksRanges = [];
+    return course;
+  }
+
+  // 有分段规则时逐段裁剪
+  if (Array.isArray(course.weeksRanges) && course.weeksRanges.length) {
+    course.weeksRanges = course.weeksRanges
+      .map((r) => ({
+        ...r,
+        from: Math.max(1, Math.min(Number(r.from) || 1, total)),
+        to: Math.max(1, Math.min(Number(r.to) || total, total)),
+      }))
+      .filter((r) => r.to >= r.from);
+  }
+
+  let sw = Number(course.startWeek) || 1;
+  let ew = Number(course.endWeek) || total;
+  course.startWeek = Math.max(1, Math.min(sw, total));
+  course.endWeek = Math.max(course.startWeek, Math.min(ew, total));
+  return course;
+}
+
+/* ============================================================ 排序 */
+
+/**
+ * 确认页的排序：星期 → 开始节次 → 周次先后。
+ *
+ * 为什么要按周次排：同一格里的多门课（劳动教育 3-8 周、形势与政策 13-16 周）
+ * 排在一起时，按周次先后显示才看得懂「先上哪门、后上哪门」。
+ */
+function sortPending() {
+  pending.sort((a, b) => {
+    const ca = a.course;
+    const cb = b.course;
+    if (ca.noSlot !== cb.noSlot) return ca.noSlot ? 1 : -1;   // 无课表课程排最后
+    const d = (Number(ca.day) || 0) - (Number(cb.day) || 0);
+    if (d !== 0) return d;
+    const sp = (Number(ca.startPeriod) || 0) - (Number(cb.startPeriod) || 0);
+    if (sp !== 0) return sp;
+    return (Number(ca.startWeek) || 1) - (Number(cb.startWeek) || 1);
+  });
 }
 
 /* ============================================================ 图片 */
@@ -280,6 +350,8 @@ async function runRecognize(images) {
 /** 把 AI 的结果转成待确认的课程 */
 function applyRecognized(result) {
   const list = [];
+  const settings = store.loadSettings();
+  const totalWeeks = Number(settings.totalWeeks) || 20;
 
   // ---- 先看 AI 有没有从「作息时间表」里读出每节课的时间
   //      有的话存进设置，之后换算和提醒都用它，而不是内置默认作息。
@@ -293,7 +365,6 @@ function applyRecognized(result) {
 
     if (clean.length >= 2) {
       periodTimes = clean;
-      const settings = store.loadSettings();
       store.saveSettings({ ...settings, periodTimes: clean });
     }
   }
@@ -315,7 +386,7 @@ function applyRecognized(result) {
     const t = periodTimes.find((p) => p.period === sp);
     const tEnd = periodTimes.find((p) => p.period === ep);
 
-    list.push(makeCourse({
+    const course = makeCourse({
       name,
       teacher: raw.teacher,
       room: raw.room,
@@ -326,7 +397,10 @@ function applyRecognized(result) {
       end: tEnd ? tEnd.end : undefined,
       weeks: parseWeeks(raw.weeks),
       confidence: typeof raw.confidence === 'number' ? raw.confidence : 1,
-    }));
+    });
+
+    // 周次裁进学期范围；没写周次的按整学期
+    list.push(applySemesterBounds(course, totalWeeks));
   });
 
   (result.noSlotCourses || []).forEach((raw) => {
@@ -349,6 +423,7 @@ function applyRecognized(result) {
   }
 
   pending = list.map((course) => ({ course, checked: true, status: 'ok' }));
+  sortPending();
   sourceLabel = '照片识别';
 
   // 整张图整体把握低时提醒一句
@@ -496,7 +571,12 @@ function handleText(text, label, alreadyBusy) {
       return;
     }
 
-    pending = courses.map((course) => ({ course, checked: true, status: 'ok' }));
+    pending = courses.map((course) => ({
+      course: applySemesterBounds(course, Number(store.loadSettings().totalWeeks) || 20),
+      checked: true,
+      status: 'ok',
+    }));
+    sortPending();
     sourceLabel = `${label}（${kindName(kind)}）`;
     renderConfirm();
   } catch (err) {
@@ -560,7 +640,7 @@ function renderConfirm(notice = '') {
    * 真实课表里同一天同一时间最多重叠 2 门，出现 3 门以上基本就是解析错了。
    * 这种情况导入进去，周视图会变成一坨重叠的色块 —— 必须在导入前拦住。
    */
-  const congestion = detectCongestion(pending);
+  const congestion = detectCongestion(pending, Number(store.loadSettings().totalWeeks) || 20);
   if (congestion) {
     head.appendChild(el('div', { class: 'import-ch-danger' }, [
       el('span', { text: '🚫' }),
@@ -808,43 +888,58 @@ function analyzeStatus(course, existing, batch) {
 /**
  * 检测「星期/节次没读出来」的典型症状。
  *
- * 真实课表里同一天同一时间最多撞 2 门（比如正课 + 实验），
- * 出现 3 门以上挤在同一格，基本就是解析出错（所有课都退化成默认值）。
- * 这种情况直接导入，周视图会变成一坨重叠的色块。
+ * ⚠️ 必须按周次判断，不能只看「同一天同一节」：
+ *   一个格子里放「第 3-8 周 劳动教育」+「第 13-16 周 形势与政策」
+ *   是完全正常的 —— 它们从不同时出现在同一周。
+ *   只有在**同一周里**真的有 3 门以上撞在一起，才算解析错了。
  *
+ * @param {Array} pendingList
+ * @param {number} totalWeeks
  * @returns {{title:string, detail:string}|null}
  */
-function detectCongestion(pendingList) {
+function detectCongestion(pendingList, totalWeeks) {
   const list = pendingList.filter((x) => x.course && !x.course.noSlot);
+  const total = Math.max(1, Number(totalWeeks) || 20);
   if (list.length < 3) return null;
 
-  // 1. 同一 (星期, 开始节次/开始时间) 挤了几门
+  // 1. 同一 (星期, 开始节次) 的课，逐周算最大同时出现数
   const buckets = {};
   list.forEach(({ course }) => {
     const key = `${Number(course.day)}|${course.startPeriod || course.start || ''}`;
-    buckets[key] = (buckets[key] || 0) + 1;
+    if (!buckets[key]) buckets[key] = [];
+    buckets[key].push(course);
   });
 
-  const worst = Object.entries(buckets).sort((a, b) => b[1] - a[1])[0];
-  if (worst && worst[1] >= 3) {
-    const [key] = worst;
-    const [day, slot] = key.split('|');
+  let worst = null;
+  Object.entries(buckets).forEach(([key, group]) => {
+    if (group.length < 3) return;
+    let maxConcurrent = 0;
+    for (let w = 1; w <= total; w += 1) {
+      const n = group.filter((c) => isCourseInWeek(c, w)).length;
+      if (n > maxConcurrent) maxConcurrent = n;
+    }
+    if (maxConcurrent >= 3 && (!worst || maxConcurrent > worst.maxConcurrent)) {
+      worst = { key, maxConcurrent };
+    }
+  });
+
+  if (worst) {
+    const [day, slot] = worst.key.split('|');
     const dayName = WEEKDAY_NAMES[Number(day)] || '某天';
     const slotName = /^\d+$/.test(slot) ? `第 ${slot} 节` : (slot || '同一个时间');
     return {
-      title: `有 ${worst[1]} 门课被放到了「${dayName} ${slotName}」`,
-      detail: '正常课表不会这样，多半是星期或节次没读出来（全部退成了默认值）。'
+      title: `有 ${worst.maxConcurrent} 门课在同一周里挤到「${dayName} ${slotName}」`,
+      detail: '正常课表不会这样，多半是星期或节次没读出来。'
         + '请点每行的「改」核对星期和节次；也可以取消勾选后改用「粘贴文本」导入。',
     };
   }
 
-  // 2. 所有课都落在同一天
+  // 2. 所有课都落在同一天（正常课表通常分布多天）
   const days = new Set(list.map((x) => Number(x.course.day)));
   if (days.size === 1 && list.length >= 4) {
     return {
       title: `所有 ${list.length} 门课都在 ${WEEKDAY_NAMES[Number(list[0].course.day)] || '同一天'}`,
-      detail: '正常课表通常会分布在多天。这很可能是只读到了课名、没读到星期。'
-        + '请核对后再导入。',
+      detail: '正常课表通常会分布在多天。这很可能是只读到了课名、没读到星期。请核对后再导入。',
     };
   }
 
