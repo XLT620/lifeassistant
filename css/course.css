@@ -44,7 +44,24 @@
 
 .week-setup-row {
   display: flex;
+  align-items: center;
   gap: 8px;
+  margin-bottom: 8px;
+}
+
+.week-setup-label {
+  flex: none;
+  width: 116px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.week-setup-opt {
+  font-weight: 400;
+  color: var(--text-secondary);
+  font-size: 0.6rem;
 }
 
 .week-setup-row .form-input {
@@ -52,9 +69,14 @@
   min-width: 0;
 }
 
-.week-setup-row .btn {
-  flex: none;
-  min-width: 68px;
+.week-setup-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 2px;
+}
+
+.week-setup-actions .btn {
+  min-width: 88px;
   min-height: 40px;
 }
 
