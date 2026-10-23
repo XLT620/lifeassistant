@@ -180,23 +180,43 @@
         </div>
 
         <!--
-          没设置课表基准日期时，这里直接让你填，不用翻到设置页。
-          之前这个输入框只藏在「设置 → 学期设置」里，用户找不到。
+          没设置日期时，这里直接让你填，不用翻到设置页。
+
+          两个日期的区别（用户明确要求）：
+            · 开学日期：它所在的那一周算**第 1 周**（开学日可以是周三、周六）
+            · 课表第一周的周一：课表实际开始上课的那一周
+          两者可能不是同一周（中间夹军训）。
         -->
         <div class="week-setup" id="weekSetup" hidden>
-          <div class="week-setup-title">📅 先告诉我课表第 1 周是哪天</div>
+          <div class="week-setup-title">📅 先告诉我开学日期</div>
           <div class="week-setup-desc">
-            周视图要显示每天的日期、判断现在是第几周、算单双周，都要靠这个日期。
-            翻一下教务系统，看「第 1 周」是从哪个周一开始的。
+            开学日期所在的那一周，算作<b>第 1 周</b>。
+            教务处的开学日期和课表实际开始上课的那一周，可能不是同一周。
           </div>
+
           <div class="week-setup-row">
+            <label class="week-setup-label" for="weekSetupTermDate">开学日期</label>
+            <input type="date" class="form-input" id="weekSetupTermDate"
+                   aria-label="开学日期">
+          </div>
+
+          <div class="week-setup-row">
+            <label class="week-setup-label" for="weekSetupDate">
+              课表第一周的周一
+              <span class="week-setup-opt">（可选，没有军训就留空）</span>
+            </label>
             <input type="date" class="form-input" id="weekSetupDate"
-                   aria-label="课表第 1 周的周一">
+                   aria-label="课表第一周的周一">
+          </div>
+
+          <div class="week-setup-actions">
             <button type="button" class="btn btn-primary btn-sm" id="weekSetupSave">保存</button>
           </div>
+
           <div class="week-setup-hint">
-            如果开学后先军训、课表晚几周才开始，保存后再到「设置 → 学期设置」
-            补填教务处的开学日期，就能额外看到「学期第几周」。
+            例：开学日 9 月 5 日（周六）→ 那周算第 1 周；
+            课表从 9 月 7 日那周开始 → 那是第 2 周。
+            填了两个日期后，周次下面会同时显示「课表第几周」。
           </div>
         </div>
 
@@ -374,13 +394,20 @@
           </div>
 
           <!-- ---------------- 周历 -->
+          <!--
+            ⚠️ 这三个 id 必须带 diet 前缀。
+            以前它们叫 weekPrev / weekNext / weekLabel，和课程表周视图的
+            id 完全一样 —— 结果 $(‘#weekLabel’) 永远取到课程表那个，
+            饮食页渲染周历时会**把课程表的周次改掉**，
+            而饮食页的「上周/下周」按钮也绑到了课程表的按钮上（点了没反应）。
+          -->
           <div id="dietWeeklyView" hidden>
             <div class="week-nav">
-              <button type="button" class="btn btn-ghost btn-sm" id="weekPrev">
+              <button type="button" class="btn btn-ghost btn-sm" id="dietWeekPrev">
                 <svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-left"/></svg> 上周
               </button>
-              <div class="week-nav-label" id="weekLabel"></div>
-              <button type="button" class="btn btn-ghost btn-sm" id="weekNext">
+              <div class="week-nav-label" id="dietWeekLabel"></div>
+              <button type="button" class="btn btn-ghost btn-sm" id="dietWeekNext">
                 下周 <svg class="icon icon-sm" aria-hidden="true"><use href="#i-chevron-right"/></svg>
               </button>
             </div>
