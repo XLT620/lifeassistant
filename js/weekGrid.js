@@ -254,11 +254,40 @@ function addDays(date, n) {
 }
 
 /**
+ * 把日期对齐到它所在那一周的周一。
+ *
+ * 为什么必须做：用户填的日期未必是周一（比如填成 9 月 3 日，而那一周的
+ * 周一是 8 月 31 日）。如果不对齐，表头的星期和日期会整体错位，
+ * 表现就是「日期与周次对不上」。
+ */
+function snapToMonday(date) {
+  const d = new Date(date.getTime());
+  const dow = d.getDay();          // 0 = 周日
+  const delta = (dow + 6) % 7;     // 周一 → 0，周日 → 6
+  d.setDate(d.getDate() - delta);
+  return d;
+}
+
+/**
  * 取出「课表基准日期」：优先 timetableStartDate，没填就退回 termStartDate。
- * 这样只填一个也能用。
+ * 返回值已经对齐到周一，只填一个也能用。
  */
 export function resolveTimetableStart(settings = {}) {
-  return parseDate(settings.timetableStartDate) || parseDate(settings.termStartDate);
+  const raw = parseDate(settings.timetableStartDate) || parseDate(settings.termStartDate);
+  return raw ? snapToMonday(raw) : null;
+}
+
+/**
+ * 某一周对应的日期范围（周一到周日）。
+ * 用于在周次下面显示「10/12 – 10/18」，方便和教务系统对一眼。
+ */
+export function weekDateRange(settings = {}, week = 1) {
+  const start = resolveTimetableStart(settings);
+  if (!start) return null;
+  const monday = addDays(start, (Number(week) - 1) * 7);
+  const sunday = addDays(monday, 6);
+  const label = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+  return { from: label(monday), to: label(sunday), monday, sunday };
 }
 
 function weeksSince(start) {
@@ -276,7 +305,8 @@ export function currentWeek(settings = {}) {
 
 /** 今天是学期的第几周（用于「第 7 周 · 学期第 9 周」这种提示）。 */
 export function currentTermWeek(settings = {}) {
-  return weeksSince(parseDate(settings.termStartDate));
+  const raw = parseDate(settings.termStartDate);
+  return weeksSince(raw ? snapToMonday(raw) : null);
 }
 
 /* ---------------------------------------------------------------- 渲染 */

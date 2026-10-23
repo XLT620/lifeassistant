@@ -523,31 +523,39 @@ export async function testConnection(settings, fetchImpl = fetch) {
  */
 const TIMETABLE_PROMPT = [
   '你是课程表识别助手。用户会给你 1~4 张图片，通常包括：',
-  '  · 一张课表（格子里的文字形如「课程名-教师@地点」）',
-  '  · 可能还有一张「作息时间表」（写着第 1 节 08:00-08:45 这种）',
+  '  · 一张课表（格子里的文字形如「课程名-教师@地点」，下面可能还有小字写周次）',
+  '  · 可能还有一张「作息时间表」（写着第 1 节 08:20-09:05 这种）',
   '',
   '只输出一个 JSON 对象，不要解释文字，不要用 markdown 代码围栏。',
   '',
+  '★ 最重要的一条：教务系统的课表是**按周次切格子**的。',
+  '  同一个格子（比如周一第 1-2 节）里经常压着好几门课，各上不同的周次：',
+  '      周一第 1-2 节：  第 3-8 周   → 劳动教育',
+  '                       第 13-16 周 → 形势与政策',
+  '  这时必须输出**两条 item**，各自带自己的 weeks。',
+  '  没有提到的周次（比如第 1-2、9-12 周）就是**没课**，不要补，也不要把缺失的周次写成整学期。',
+  '',
   'JSON 格式示例：',
   '{',
-  '  "courses": [',
+  '  "cells": [',
   '    {',
-  '      "name": "国家安全教育",',
-  '      "teacher": "蒋荣华",',
-  '      "room": "厚德206",',
   '      "day": 1,',
   '      "startPeriod": 1,',
   '      "endPeriod": 2,',
-  '      "weeks": "1-16"',
+  '      "items": [',
+  '        { "name": "劳动教育", "teacher": "", "room": "", "weeks": "3-8" },',
+  '        { "name": "形势与政策", "teacher": "", "room": "", "weeks": "13-16" }',
+  '      ]',
   '    }',
   '  ],',
   '  "noSlotCourses": [',
   '    { "name": "军事技能", "code": "B29800001", "weeks": "1" }',
   '  ],',
   '  "periodTimes": [',
-  '    { "period": 1, "start": "08:00", "end": "08:45" },',
-  '    { "period": 2, "start": "08:55", "end": "09:40" }',
+  '    { "period": 1, "start": "08:20", "end": "09:05" },',
+  '    { "period": 2, "start": "09:15", "end": "10:00" }',
   '  ],',
+  '  "semesterWeeks": 18,',
   '  "weekdayHeaderDetected": true,',
   '  "periodColumnDetected": true,',
   '  "confidence": 0.85,',
@@ -555,31 +563,32 @@ const TIMETABLE_PROMPT = [
   '}',
   '',
   '字段说明：',
-  '- day：1=周一，2=周二 … 7=周日。必须是数字。',
-  '- startPeriod / endPeriod：第几节课，数字。「一二节」写 1 和 2；「三四节」写 3 和 4；',
-  '  「九十十一节」写 9 和 11。',
-  '- weeks：周次原文，比如 "1-16"、"1-8"、"单周"、"双周"。看不到就写 ""。',
-  '- teacher：可能多个，用逗号连接，原样保留。',
-  '- room：教室或场地名。',
-  '- noSlotCourses：课表底部单独列出、**没有具体星期和节次**的课（如军训、劳动教育、入学教育）。',
-  '  这些只填 name / code / weeks。',
+  '- cells：一个格子一条。day：1=周一 … 7=周日（必须是数字）。',
+  '  startPeriod / endPeriod 是第几节课，数字。「一二节」= 1..2；「三四节」= 3..4；',
+  '  「九十十一节」= 9..11（跨 3 节）。',
+  '- items：这个格子里的每一门课。**同一格多门课就写多个 item**。',
+  '  · name：课程名　· teacher：教师（多个用逗号）　· room：教室',
+  '  · weeks：周次**原文**，例如 "3-8"、"1-16"、"单周"、"13-16"。',
+  '    如果这一门课在格子里没有写任何周次，就写 ""（空字符串）。',
+  '    不要自己编周次，不要因为「看不到」就写 "1-20"。',
+  '- noSlotCourses：课表底部单独列出、**没有具体星期和节次**的课（军训、劳动教育、入学教育等）。',
+  '  只填 name / code / weeks。',
+  '- semesterWeeks：图里能看到「共 X 周」时把学期总周数填上；看不到就写 null。',
   '',
-  '★ periodTimes 是这次最重要的字段：',
-  '  如果图片里**有作息时间表 / 上课时间表**，请把每一节的开始和结束时间都读出来，',
-  '  放进 periodTimes（至少覆盖课表里用到的节次）。这是唯一能知道「第 3 节到底几点」的来源。',
-  '  如果图片里**没有**作息时间表，就返回空数组 []，不要凭猜测编时间。',
+  '★ periodTimes：如果图里有「作息时间表 / 上课时间表」，把每一节的开始和结束时间读出来。',
+  '  这是唯一能知道「第 3 节到底几点」的来源。',
+  '  没有作息表就返回空数组 []，**不要凭猜测编时间**。',
   '',
-  '⚠️ 重要规则：',
-  '1. 一格里的文字形如「课程名-教师@地点」，请拆成三个字段。',
-  '2. 如果一格里有多个教师（用逗号分隔），teacher 里原样保留。',
-  '3. 如果认不出某个格子，宁可不返回这一门，也不要编造。',
-  '4. 多张图时请**合并**结果：课表给课程，作息表给 periodTimes，不要重复输出同一门课。',
+  '⚠️ 其它规则：',
+  '1. 一格里的文字形如「课程名-教师@地点」，拆成 name / teacher / room 三个字段。',
+  '2. 认不出的格子宁可不输出，也不要编造。',
+  '3. 多张图时请**合并**：课表给 cells，作息表给 periodTimes，不要重复输出同一门课。',
+  '4. 星期和节次**必须来自图片**。看不出星期几就不要输出这个格子 ——',
+  '   千万不要把不确定的课全塞进「周一 第1节」，那会让整个课表全部重叠。',
   '5. 如果整张图看不清、或者不是课程表，返回',
-  '   {"courses":[],"noSlotCourses":[],"periodTimes":[],"weekdayHeaderDetected":false,"periodColumnDetected":false,"confidence":0,"notes":"看不清"}',
+  '   {"cells":[],"noSlotCourses":[],"periodTimes":[],"weekdayHeaderDetected":false,"periodColumnDetected":false,"confidence":0,"notes":"看不清"}',
   '6. weekdayHeaderDetected = 有没有认出「周一/周二…」这一行表头。',
   '7. periodColumnDetected = 有没有认出「一二节/三四节…」这一列行标题。',
-  '8. 星期和节次**必须来自图片**。如果图上看不出是星期几，就不要返回这门课 ——',
-  '   千万不要把不确定的课全塞进「周一 第1节」，那会让整个课表全部重叠。',
 ].join('\n');
 
 /**
@@ -736,13 +745,47 @@ export function parseTimetableResult(raw) {
     try {
       const obj = JSON.parse(candidate);
       if (obj && typeof obj === 'object') {
-        const courses = Array.isArray(obj.courses) ? obj.courses : [];
         const noSlot = Array.isArray(obj.noSlotCourses) ? obj.noSlotCourses : [];
         const periodTimes = Array.isArray(obj.periodTimes) ? obj.periodTimes : [];
+
+        /*
+         * 两种返回格式都接受：
+         *   cells   新格式：按格子组织，一个格子里可以有多个 item（不同周次）
+         *   courses 旧格式：一条门一条的平铺列表
+         *
+         * 新格式更容易让模型把「同格不同周次」的多门课分别输出，
+         * 所以优先用它。
+         */
+        let courses = [];
+        if (Array.isArray(obj.cells) && obj.cells.length) {
+          obj.cells.forEach((cell) => {
+            if (!cell || typeof cell !== 'object') return;
+            const items = Array.isArray(cell.items) ? cell.items : [];
+            items.forEach((item) => {
+              if (!item || typeof item !== 'object') return;
+              courses.push({
+                name: item.name,
+                teacher: item.teacher,
+                room: item.room,
+                weeks: item.weeks,
+                day: cell.day,
+                startPeriod: cell.startPeriod,
+                endPeriod: cell.endPeriod,
+                confidence: typeof item.confidence === 'number'
+                  ? item.confidence
+                  : cell.confidence,
+              });
+            });
+          });
+        } else if (Array.isArray(obj.courses)) {
+          courses = obj.courses;
+        }
+
         return {
           courses,
           noSlotCourses: noSlot,
           periodTimes,
+          semesterWeeks: typeof obj.semesterWeeks === 'number' ? obj.semesterWeeks : null,
           weekdayHeaderDetected: obj.weekdayHeaderDetected !== false,
           periodColumnDetected: obj.periodColumnDetected !== false,
           confidence: typeof obj.confidence === 'number' ? obj.confidence : null,
@@ -833,6 +876,7 @@ export async function recognizeTimetable({
     courses: parsed.courses,
     noSlotCourses: parsed.noSlotCourses,
     periodTimes: parsed.periodTimes,
+    semesterWeeks: parsed.semesterWeeks,
     meta: {
       confidence: parsed.confidence,
       notes: parsed.notes,

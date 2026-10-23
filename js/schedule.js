@@ -12,7 +12,9 @@ import {
 } from './utils.js';
 import { STORAGE_KEYS, WEEKDAY_NAMES } from './constants.js';
 import * as store from './store.js';
-import { renderWeekGrid, currentWeek, currentTermWeek } from './weekGrid.js';
+import {
+  renderWeekGrid, currentWeek, currentTermWeek, weekDateRange,
+} from './weekGrid.js';
 
 /* ---------------------------------------------------------------- 状态 */
 
@@ -167,6 +169,10 @@ function renderWeek() {
       parts.push(week === base
         ? '本周'
         : (week < base ? `比本周早 ${base - week} 周` : `比本周晚 ${week - base} 周`));
+
+      // 显示这一周的日期范围，方便和教务系统核对「周次 ↔ 日期」
+      const range = weekDateRange(settings, week);
+      if (range) parts.push(`${range.from}–${range.to}`);
       parts.push(`共 ${totalWeeks} 周`);
 
       // 如果填了两个日期，顺便告一下对应学期的第几周，方便核对

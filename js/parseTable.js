@@ -396,6 +396,42 @@ export function detectMapping(rows, keywords) {
 /* ============================================================ 网格表 */
 
 /**
+ * 从一段文字里抠出周次，并返回剩下的部分。
+ *
+ * 教务系统的格子里经常这样写：
+ *   "劳动教育 3-8周"
+ *   "形势与政策 第13-16周"
+ *   "体育 1-16周(单)"
+ * 提示词里周次是单独字段，但从表格文本来的往往混在一起，
+ * 不拆的话课程名会变成「劳动教育 3-8周」。
+ *
+ * @returns {{text:string, weeks:string}}
+ */
+export function extractWeeks(raw) {
+  let text = String(raw || '').trim();
+  let weeks = '';
+
+  const patterns = [
+    /第?\s*\d{1,2}\s*[-~－至]\s*\d{1,2}\s*周(?:\s*[（(]\s*[单双]\s*[)）])?/,
+    /第?\s*\d{1,2}\s*周(?:\s*[（(]\s*[单双]\s*[)）])?/,
+    /[（(]?\s*[单双]周\s*[)）]?/,
+  ];
+
+  for (const re of patterns) {
+    const m = text.match(re);
+    if (m && typeof m.index === 'number') {
+      weeks = m[0].trim();
+      text = (text.slice(0, m.index) + ' ' + text.slice(m.index + m[0].length))
+        .replace(/\s{2,}/g, ' ')
+        .trim();
+      break;
+    }
+  }
+
+  return { text, weeks };
+}
+
+/**
  * 判断是不是「教务系统网格表」：表头是星期，首列是节次。
  */
 export function looksLikeMatrix(rows) {
@@ -445,17 +481,25 @@ export function parseMatrix(rows) {
       const c = Number(colKey);
       const text = (row[c] || '').trim();
       if (!text) return;
-      // 有些格子会塞两门课，用换行分开 —— 我们已经把换行变成空格了，
-      // 这里按「；」或「/」再拆一次
-      const parts = text.split(/[；;]/).map((s) => s.trim()).filter(Boolean);
+
+      // 一个格子里可能压着多门课（各上不同周次），常见分隔：
+      //   换行、分号、「；」，也有用全角空格隔开的。
+      const parts = text
+        .split(/[；;\n]+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+
       parts.forEach((part) => {
-        const parsed = parseCellText(part);
+        // 先把「3-8周」这类周次从文字里抠出来，剩下的才是课程名
+        const { text: rest, weeks } = extractWeeks(part);
+        const parsed = parseCellText(rest);
         if (!parsed.name) return;
         out.push(makeCourse({
           ...parsed,
           day: colDay[c],
           startPeriod: periods.startPeriod,
           endPeriod: periods.endPeriod,
+          weeks: weeks ? parseWeeks(weeks) : null,
         }));
       });
     });
