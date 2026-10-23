@@ -34,7 +34,7 @@
    改版本号请用文本编辑器（VS Code、记事本都行）。
    ========================================================================== */
 
-const CACHE_VERSION = 'v3.3.0';
+const CACHE_VERSION = 'v3.4.0';
 const CACHE_NAME = `lifeassistant-${CACHE_VERSION}`;
 
 /**
