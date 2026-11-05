@@ -98,13 +98,21 @@ export function parseCellText(raw) {
 
 /**
  * 解析周次文本。
- * 支持的写法（教务系统里都真实出现过）：
- *   "1-16"    "1-16周"    "第1-16周"    "1~16"
- *   "1-16单"  "1-16周(单)"  "单周"   "双周"
- *   "1-8单,9-16双"（混合，用 ranges 表达）
+ *
+ * 真实教务系统里周次是**一串列表**，不是单个区间：
+ *   "3-8周,12周"                      → 3-8 和 12（12 是单周！）
+ *   "2-8周,12-19周"                   → 2-8 和 12-19
+ *   "1周,7周,13-17周(单),18-20周"      → 1、7、13-17(单)、18-20
+ *   "2-8周(双),12-18周(双)"            → 2-8(双)、12-18(双)
+ *   "1-8周12-16周"                    → 1-8、12-16（中间没逗号）
+ *   "1-16周(单)"、"1-16单"、"单周"、"双周"
+ *
+ * 以前的实现只抓「数字-数字」这种区间，会把 "," 后面的单个周次
+ * （比如 "3-8周,12周" 里的 12 周）整个丢掉 —— 这是真实的漏课原因。
+ *
  * @returns {{startWeek, endWeek, parity, ranges, raw}}
  *   parity: 'all' | 'odd'(单) | 'even'(双)
- *   ranges: [{from, to, parity}]，混合规则时有多段
+ *   ranges: [{from, to, parity}]，按 from 升序
  */
 export function parseWeeks(raw) {
   const text = String(raw || '').trim();
@@ -113,66 +121,76 @@ export function parseWeeks(raw) {
   };
   if (!text) return result;
 
-  /* ---- 找出所有数字区间 ---- */
   const ranges = [];
-  const rangeRe = /(\d{1,2})\s*[-~－至]\s*(\d{1,2})/g;
-  let m = rangeRe.exec(text);
-  while (m) {
-    ranges.push({ from: Number(m[1]), to: Number(m[2]), parity: 'all' });
-    m = rangeRe.exec(text);
-  }
 
-  if (ranges.length === 0) {
-    const single = text.match(/\d{1,2}/);
-    if (single) {
-      const n = Number(single[0]);
-      ranges.push({ from: n, to: n, parity: 'all' });
+  /*
+   * 逐个抓「3-8」「12」「13-17(单)」这样的片段。
+   * 注意 token 后面可能紧跟裸的「单」/「双」（"1-16单"），
+   * 也可能紧跟括号（"1-16周(单)"）。
+   */
+  const tokenRe = /(\d{1,2})(?:\s*[-~－至]\s*(\d{1,2}))?\s*周?\s*(?:[（(]\s*([单双])\s*[)）])?/g;
+  let m = tokenRe.exec(text);
+
+  while (m !== null) {
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+
+    if (Number.isFinite(a) && a >= 1 && a <= 30 && b >= 1 && b <= 30) {
+      let parity = 'all';
+      if (m[3] === '单') parity = 'odd';
+      else if (m[3] === '双') parity = 'even';
+      else {
+        // 看紧跟着的是不是裸的「单」「双」（后面不是右括号，那种已经被上面的分组抓走了）
+        const rest = text.slice(tokenRe.lastIndex);
+        const bare = rest.match(/^\s*([单双])/);
+        if (bare) parity = bare[1] === '单' ? 'odd' : 'even';
+      }
+
+      ranges.push({
+        from: Math.min(a, b),
+        to: Math.max(a, b),
+        parity,
+      });
+
+      // 如果刚吃掉一个裸单/双，把匹配位置往前推，避免重复扫描
+      if (!m[3]) {
+        const rest = text.slice(tokenRe.lastIndex);
+        const bare = rest.match(/^\s*([单双])/);
+        if (bare) tokenRe.lastIndex += bare[0].length;
+      }
     }
+
+    m = tokenRe.exec(text);
   }
 
-  /* ---- 单双周标记 ----
-     注意不能只匹配「单周」：
-     真实数据里经常写成「1-16单」「1-16(单)」「单」，
-     这些都不带「周」字。                                              */
-  const hasOdd = /单|odd/i.test(text);
-  const hasEven = /双|even/i.test(text);
-
+  // 一段都没有，但写了「单周」「双周」
   if (ranges.length === 0) {
-    // 只有「单周」「双周」这种，没有具体数字 → 从现在起整学期
-    if (hasOdd && !hasEven) result.parity = 'odd';
-    else if (hasEven && !hasOdd) result.parity = 'even';
+    if (/单/.test(text) && !/双/.test(text)) result.parity = 'odd';
+    else if (/双/.test(text) && !/单/.test(text)) result.parity = 'even';
     return result;
   }
 
-  /* ---- 给每段分配单双周 ----
-     一段 → 整段同一种；
-     多段（"1-8单,9-16双"）→ 按段序交替/按就近的标记判断。
-     简化策略：如果同时出现单和双，就把标记按出现顺序分配给各段。 */
-  if (hasOdd && hasEven) {
-    const oddPos = text.search(/单|odd/i);
-    const evenPos = text.search(/双|even/i);
-    // 单在前 → 第一段单、第二段双；反之相反
-    ranges.forEach((r, i) => {
-      if (ranges.length === 1) {
-        r.parity = 'all';     // 一段里既写单又写双，只能当每周
-      } else if (oddPos < evenPos) {
-        r.parity = i % 2 === 0 ? 'odd' : 'even';
+  // 合并重复/相邻的段，并按起始周排序
+  const merged = [];
+  ranges
+    .sort((x, y) => x.from - y.from)
+    .forEach((r) => {
+      const last = merged[merged.length - 1];
+      if (last && last.parity === r.parity && r.from <= last.to + 1) {
+        last.to = Math.max(last.to, r.to);
       } else {
-        r.parity = i % 2 === 0 ? 'even' : 'odd';
+        merged.push({ ...r });
       }
     });
-    result.parity = 'all';    // 顶层标记不再有单一含义
-  } else if (hasOdd) {
-    ranges.forEach((r) => { r.parity = 'odd'; });
-    result.parity = 'odd';
-  } else if (hasEven) {
-    ranges.forEach((r) => { r.parity = 'even'; });
-    result.parity = 'even';
-  }
 
-  result.ranges = ranges;
-  result.startWeek = Math.min(...ranges.map((r) => r.from));
-  result.endWeek = Math.max(...ranges.map((r) => r.to));
+  result.ranges = merged;
+  result.startWeek = Math.min(...merged.map((r) => r.from));
+  result.endWeek = Math.max(...merged.map((r) => r.to));
+
+  // 顶层 parity：所有段一致才算单一含义
+  const parities = new Set(merged.map((r) => r.parity));
+  result.parity = parities.size === 1 ? [...parities][0] : 'all';
+
   return result;
 }
 
@@ -432,18 +450,204 @@ export function extractWeeks(raw) {
 }
 
 /**
- * 判断是不是「教务系统网格表」：表头是星期，首列是节次。
+ * 解析「教务系统导出表格」里的一格。
+ *
+ * 真实格式（天麟校区 2026-2027-1 课表，教务处导出）：
+ *
+ *   劳动教育1/(1-2节)3-8周,12周/天麟校区科602/黄薏/1/16
+ *   思想道德与法治/(1-2节)2-8周,12-19周/天麟校区科802/俞玥/3.0/48
+ *   大学英语1/(3-4节)1周,7周,13-17周(单),18-20周天麟校区科602/苏靖辉/2.0/32
+ *
+ * 底部图例写的是：课程◇周次◇校区◇地点◇教师◇学分◇课程总学时
+ *
+ * 需要注意的坑（都是真实数据里出现过的）：
+ *   · 一个格子里有多门课，用**换行**分隔
+ *   · 周次和校区之间**可能没有 "/"**（"18-20周天麟校区科602"）
+ *   · 节次写在括号里、紧贴周次："(1-2节)3-8周"
+ *   · 周次是多段列表："3-8周,12周"（12 是单周）
+ *   · 全角逗号："2-8周，12-19周"
+ *   · 地点里带括号："经管楼201(营销业务综合实训室)"
+ *
+ * @param {string} raw 单元格原文
+ * @returns {Array<{name,teacher,room,campus,startPeriod,endPeriod,weeks,credit,hours}>}
+ */
+export function parseEduCell(raw) {
+  const text = String(raw || '').replace(/\r/g, '');
+  if (!text.trim()) return [];
+
+  // 一格多课：换行 / 分号分开
+  const lines = text.split(/[\n；;]+/).map((s) => s.trim()).filter(Boolean);
+
+  const out = [];
+  lines.forEach((line) => {
+    const one = parseEduLine(line);
+    if (one) out.push(one);
+  });
+  return out;
+}
+
+/** 解析一行「课程名/(1-2节)3-8周/校区地点/教师/学分/学时」 */
+function parseEduLine(line) {
+  // 1. 节次：必须是「(数字-数字节)」才算这种格式
+  const pm = line.match(/[（(]\s*(\d{1,2})\s*[-~－至]\s*(\d{1,2})\s*节\s*[)）]/);
+  if (!pm) return null;
+
+  const startPeriod = Number(pm[1]);
+  const endPeriod = Number(pm[2]);
+  if (!(startPeriod >= 1 && endPeriod >= startPeriod && endPeriod <= 20)) return null;
+
+  // 2. 课程名 = 节次括号之前的部分（去掉结尾的 / 和空白）
+  const name = line.slice(0, pm.index).replace(/[\/\s]+$/, '').trim();
+  if (!name) return null;
+
+  // 3. 节次之后是「周次…」，一直到下一个 "/" 或「XX校区」
+  const rest = line.slice(pm.index + pm[0].length);
+
+  // 抓出所有周次片段（3-8周 / 12周 / 13-17周(单) / 1-8周12-16周）
+  const weekRe = /(\d{1,2})\s*[-~－至]\s*(\d{1,2})\s*周\s*(?:[（(]\s*[单双]\s*[)）])?|(\d{1,2})\s*周\s*(?:[（(]\s*[单双]\s*[)）])?/g;
+  const weekParts = [];
+  let wm = weekRe.exec(rest);
+  let weekEnd = 0;
+  while (wm !== null) {
+    weekParts.push(wm[0]);
+    weekEnd = wm.index + wm[0].length;
+    wm = weekRe.exec(rest);
+  }
+  let weeks = weekParts.join(',');
+
+  // 周次后面、到第一个 "/" 之前，可能是「校区+地点」（缺 "/" 的情况）
+  let tailInline = '';
+  if (weekEnd > 0) {
+    const after = rest.slice(weekEnd);
+    const firstSlash = after.indexOf('/');
+    tailInline = (firstSlash >= 0 ? after.slice(0, firstSlash) : after).trim();
+  }
+
+  // 4. 剩下的字段按 "/" 拆
+  const fields = line.split('/').map((s) => s.trim()).filter((s, i) => i === 0 || s !== '');
+
+  /*
+   * 字段数量不固定：
+   *   6 段：课程 / 周次 / 校区地点 / 教师 / 学分 / 学时
+   *   5 段：课程 / 周次+校区地点 / 教师 / 学分 / 学时
+   * 从尾部往前数更稳：最后两个是「学分」「学时」（纯数字）。
+   */
+  let campusPlace = tailInline;
+  let teacher = '';
+  let credit = '';
+  let hours = '';
+
+  const tail = fields.slice(1);   // 去掉课程名那段
+  const isNum = (s) => /^\d+(\.\d+)?$/.test(String(s || '').trim());
+
+  let end = tail.length;
+  if (end >= 2 && isNum(tail[end - 1]) && isNum(tail[end - 2])) {
+    hours = tail[end - 1];
+    credit = tail[end - 2];
+    end -= 2;
+  } else if (end >= 1 && isNum(tail[end - 1])) {
+    hours = tail[end - 1];
+    end -= 1;
+  }
+
+  if (end >= 2) {
+    teacher = tail[end - 1];
+    campusPlace = tail[end - 2] || campusPlace;
+  } else if (end === 1) {
+    // 只剩一段，可能是教师也可能是地点
+    if (/校区|楼|场|馆|室|\d/.test(tail[0])) campusPlace = tail[0];
+    else teacher = tail[0];
+  }
+
+  // 教师那一段可能还挂着「校区地点」（因为没有 "/" 分隔）
+  if (teacher && /校区/.test(teacher) && teacher.indexOf('校区') > 0) {
+    const idx = teacher.lastIndexOf('校区') + 2;
+    campusPlace = teacher.slice(0, idx) + (campusPlace || '');
+    teacher = teacher.slice(idx);
+  }
+
+  /*
+   * 清洗地点字段。
+   *
+   * 有些格子没有 "/" 把「周次」和「校区地点」分开，比如：
+   *   (3-4节)1周,7周,13-17周(单),18-20周天麟校区科602
+   * 这时地点字段会连着节次和周次。把节次/周次片段剥掉，
+   * 剩下的「天麟校区科602」才是地点。
+   * 注意：像「经管楼201(营销业务综合实训室)」这种带数字和括号的
+   * 真实地点不能被误删 —— 所以只剥「带节/周字」的片段。
+   */
+  campusPlace = String(campusPlace || '')
+    .replace(/[（(]\s*\d{1,2}\s*[-~－至]\s*\d{1,2}\s*节\s*[)）]/g, '')
+    .replace(/\d{1,2}\s*[-~－至]\s*\d{1,2}\s*周\s*(?:[（(]\s*[单双]\s*[)）])?/g, '')
+    .replace(/\d{1,2}\s*周\s*(?:[（(]\s*[单双]\s*[)）])?/g, '')
+    .replace(/^[,，、;；\s]+/, '')
+    .trim();
+
+  if (!campusPlace) campusPlace = String(tailInline || '').trim();
+
+  // 5. 拆「校区 / 地点」
+  let campus = '';
+  let room = String(campusPlace || '').trim();
+  const cm = room.match(/^(.{2,6}?校区)/);
+  if (cm) {
+    campus = cm[1];
+    room = room.slice(cm[1].length).trim();
+  }
+
+  // 6. 没有抓到周次时，别把整段当周次
+  if (!weeks) weeks = '';
+
+  return {
+    name,
+    teacher: String(teacher || '').trim(),
+    room: String(room || '').trim(),
+    campus,
+    startPeriod,
+    endPeriod,
+    weeks,
+    credit,
+    hours,
+  };
+}
+
+
+/**
+ * 判断一个单元格是不是「星期表头」。
+ *
+ * ⚠️ 必须整格精确匹配，不能用 weekdayFromText 那种「包含即可」的判断。
+ * 真实反例：`大学英语1/…/18-20周天麟校区科602/…` 里有「周天」两个字，
+ * 用包含判断会被当成「周日」，整门课就被当成表头丢掉了。
+ */
+function isWeekdayHeaderCell(raw) {
+  return /^\s*(?:星期|周|礼拜)\s*[一二三四五六日天1-7]\s*(?:\d{1,2})?\s*$/.test(String(raw || ''));
+}
+
+/**
+ * 判断是不是「教务系统网格表」：表头有 3 个以上星期，且能找到节次。
+ *
+ * ⚠️ 节次不一定在第 1 列。真实表格常常是：
+ *      A 列 = 上午 / 下午 / 晚上   B 列 = 二 / 三 / 四 / 五   C 列起才是星期
+ *   所以要在**前 3 列**里找节次，不能只看第 0 列。
  */
 export function looksLikeMatrix(rows) {
   for (let r = 0; r < Math.min(rows.length, 4); r += 1) {
     const row = rows[r];
-    const dayHits = row.filter((c) => weekdayFromText(c) !== null).length;
-    if (dayHits >= 3) {
-      // 还要确认后面几行的首列像节次
-      const bodyRows = rows.slice(r + 1, r + 4);
-      const periodHits = bodyRows.filter((b) => periodsFromText(b[0]) !== null).length;
-      if (periodHits >= 1) return true;
-    }
+    const dayHits = row.filter((c) => isWeekdayHeaderCell(c)).length;
+    if (dayHits < 3) continue;
+
+    // 表头下面几行里，前 3 列中能找到节次标签，或者格子里带「(1-2节)」
+    const bodyRows = rows.slice(r + 1, r + 5);
+    const hasPeriodLabel = bodyRows.some((b) => {
+      for (let k = 0; k < Math.min(3, b.length); k += 1) {
+        if (periodsFromText(b[k]) !== null) return true;
+      }
+      return false;
+    });
+    const hasPeriodInCell = bodyRows.some((b) => b.some(
+      (c) => /[（(]\s*\d{1,2}\s*[-~－至]\s*\d{1,2}\s*节\s*[)）]/.test(String(c || '')),
+    ));
+
+    if (hasPeriodLabel || hasPeriodInCell) return true;
   }
   return false;
 }
@@ -458,7 +662,7 @@ export function parseMatrix(rows) {
   let headerRow = -1;
   let colDay = {};
   for (let r = 0; r < Math.min(rows.length, 4); r += 1) {
-    const hits = rows[r].filter((c) => weekdayFromText(c) !== null).length;
+    const hits = rows[r].filter((c) => isWeekdayHeaderCell(c)).length;
     if (hits >= 3) {
       headerRow = r;
       rows[r].forEach((cell, c) => {
@@ -470,35 +674,72 @@ export function parseMatrix(rows) {
   }
   if (headerRow < 0) return [];
 
-  // 2. 逐行读（首列是节次）
+  // 2. 逐行读
+  //    首列不一定是节次 —— 真实表格里 A 列是「上午/下午/晚上」，
+  //    B 列才是「二/三/四/五」。所以要在前 3 列里找节次标签。
   const out = [];
   for (let r = headerRow + 1; r < rows.length; r += 1) {
     const row = rows[r];
-    const periods = periodsFromText(row[0]);
-    if (!periods) continue;
+
+    let rowPeriods = null;
+    for (let k = 0; k < Math.min(3, row.length); k += 1) {
+      const p = periodsFromText(row[k]);
+      if (p) { rowPeriods = p; break; }
+    }
 
     Object.keys(colDay).forEach((colKey) => {
       const c = Number(colKey);
       const text = (row[c] || '').trim();
       if (!text) return;
 
-      // 一个格子里可能压着多门课（各上不同周次），常见分隔：
-      //   换行、分号、「；」，也有用全角空格隔开的。
+      /*
+       * 单元格本身就是「星期三」这种表头文字 → 跳过。
+       * 多工作表合并时，第二个表的表头会落在数据区，不挡掉就会
+       * 变出「星期一」「星期二」这样的假课程。
+       */
+      if (isWeekdayHeaderCell(text)) return;
+
+      /*
+       * ★ 优先用「教务系统一格一课的原始格式」解析：
+       *     课程名/(1-2节)3-8周,12周/天麟校区科602/黄薏/1/16
+       *   这种格式里节次、周次、教师、地点都在格子里，最可靠。
+       *   它的节次来自格子内部，比行首的「二/三/四」准。
+       */
+      const edu = parseEduCell(text);
+      if (edu.length) {
+        edu.forEach((item) => {
+          out.push(makeCourse({
+            ...item,
+            day: colDay[c],
+            weeks: parseWeeks(item.weeks),
+          }));
+        });
+        return;
+      }
+
+      // 兜底：老格式（课程名-教师@地点，节次靠行首）
+      if (!rowPeriods) return;
+
       const parts = text
         .split(/[；;\n]+/)
         .map((s) => s.trim())
         .filter(Boolean);
 
       parts.forEach((part) => {
-        // 先把「3-8周」这类周次从文字里抠出来，剩下的才是课程名
         const { text: rest, weeks } = extractWeeks(part);
         const parsed = parseCellText(rest);
         if (!parsed.name) return;
+        /*
+         * 课程名里至少要有一个中文字或字母。
+         * 否则「1-2节」「3.0」「08:00」这类纯数字/标点会被当成课程名，
+         * 生成一堆假课程（多工作表时特别容易出现）。
+         */
+        if (!/[\u4e00-\u9fa5A-Za-z]/.test(parsed.name)) return;
         out.push(makeCourse({
           ...parsed,
           day: colDay[c],
-          startPeriod: periods.startPeriod,
-          endPeriod: periods.endPeriod,
+          startPeriod: rowPeriods.startPeriod,
+          endPeriod: rowPeriods.endPeriod,
           weeks: weeks ? parseWeeks(weeks) : null,
         }));
       });
@@ -720,16 +961,49 @@ export async function parseXLSX(arrayBuffer) {
     });
   }
 
-  // ---- 找第一个工作表
-  let sheetPath = 'xl/worksheets/sheet1.xml';
-  if (!files.has(sheetPath)) {
-    const found = [...files.keys()].find((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k));
-    if (!found) throw new Error('这个 Excel 里没有工作表');
-    sheetPath = found;
-  }
+  // ---- 找出所有工作表
+  const sheetPaths = [...files.keys()]
+    .filter((k) => /^xl\/worksheets\/sheet\d+\.xml$/.test(k))
+    .sort((a, b) => Number((a.match(/(\d+)\.xml$/) || [0, 0])[1])
+      - Number((b.match(/(\d+)\.xml$/) || [0, 0])[1]));
 
-  const sheetXml = decoder.decode(files.get(sheetPath));
-  return parseSheetXml(sheetXml, shared);
+  if (!sheetPaths.length) throw new Error('这个 Excel 里没有工作表');
+
+  /*
+   * 一个 xlsx 里可能有好几个工作表：
+   *   第 1 个是课表、第 2 个是作息时间表、第 3 个是别的班级的课表…
+   * 以前只读 sheet1，多表的文件会被漏掉一半课。
+   *
+   * 现在的做法：每个表都解析，但**只合并「看起来像课表」的表**
+   * （前 6 行里出现 3 个以上星期表头）。这样作息表、说明页不会污染课程。
+   * 如果一个像课表的都没有，就退回「只读第一个表」。
+   */
+  const parsed = sheetPaths.map((p) => ({
+    path: p,
+    rows: parseSheetXml(decoder.decode(files.get(p)), shared),
+  }));
+
+  const looksLikeTable = (rows) => {
+    let hits = 0;
+    for (let r = 0; r < Math.min(rows.length, 6); r += 1) {
+      hits += rows[r].filter((c) => isWeekdayHeaderCell(c)).length;
+      if (hits >= 3) return true;
+    }
+    return false;
+  };
+
+  const blocks = parsed.filter((b) => looksLikeTable(b.rows));
+  const use = blocks.length ? blocks : [parsed[0]];
+
+  if (use.length === 1) return use[0].rows;
+
+  // 多个工作表合并：中间插一行空行，避免表头/数据串到一起
+  const merged = [];
+  use.forEach((b, i) => {
+    if (i > 0) merged.push([]);
+    b.rows.forEach((row) => merged.push(row));
+  });
+  return merged;
 }
 
 function parseSheetXml(xml, shared) {
@@ -877,34 +1151,173 @@ async function inflateRaw(data) {
 /* ============================================================ 总入口 */
 
 /**
+ * 从「作息时间表」的文字里读出每节课的时间。
+ *
+ * 真实作息表长这样（天麟校区 表2）：
+ *   1  上午  第一节  08:00-08:45
+ *   2        第二节  08:55-09:40   课间10分钟
+ *   ...
+ *   5  下午  第五节  14:30-15:15
+ *
+ * 只要能解析出「第几节 → 几点到几点」，周视图的时间轴和课前提醒
+ * 就会用学校的真实作息，而不是内置默认值。
+ *
+ * @returns {Array<{period:number, start:string, end:string}>}
+ */
+export function parsePeriodTimes(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const out = [];
+  let seq = 0;
+
+  const cnNum = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 };
+  const cnPeriod = (s) => {
+    if (!s) return null;
+    if (/^\d{1,2}$/.test(s)) return Number(s);
+    // 十一、十二 这种
+    if (s.length === 2 && s[0] === '十' && cnNum[s[1]]) return 10 + cnNum[s[1]];
+    if (s.length === 3 && s[0] === '十' && s[1] === '十') return null;
+    if (s[0] === '十' && s[1] === '一') return 11;
+    if (s[0] === '十' && s[1] === '二') return 12;
+    return cnNum[s] || null;
+  };
+
+  lines.forEach((line) => {
+    const tm = line.match(/(\d{1,2})\s*[:：]\s*(\d{2})\s*[-~－至—]\s*(\d{1,2})\s*[:：]\s*(\d{2})/);
+    if (!tm) return;
+
+    const start = `${String(Number(tm[1])).padStart(2, '0')}:${tm[2]}`;
+    const end = `${String(Number(tm[3])).padStart(2, '0')}:${tm[4]}`;
+
+    const pm = line.match(/第\s*([一二三四五六七八九十\d]{1,3})\s*节/);
+    seq += 1;
+    const period = (pm && cnPeriod(pm[1])) || seq;
+
+    out.push({ period, start, end });
+  });
+
+  // 去重（同一节出现两次取第一条）并按节次排序
+  const seen = new Map();
+  out.forEach((p) => { if (!seen.has(p.period)) seen.set(p.period, p); });
+  return [...seen.values()].sort((a, b) => a.period - b.period);
+}
+
+/**
+ * 从课表的页脚/抬头里读出「学期信息」。
+ *
+ * 真实课表底部一般写着：
+ *   本学期2026-08-31正式上课至2027-01-17结束，共20周
+ * 这正好是 App 需要的两个日期 + 总周数，能省掉用户自己填。
+ *
+ * @returns {{termStartDate:string, totalWeeks:number}|null}
+ */
+export function parseSemesterInfo(text) {
+  const src = String(text || '');
+  const out = {};
+
+  const start = src.match(/(\d{4})\s*[-./年]\s*(\d{1,2})\s*[-./月]\s*(\d{1,2})\s*日?\s*(?:正式)?(?:上课|开学)/);
+  if (start) {
+    out.termStartDate = `${start[1]}-${String(start[2]).padStart(2, '0')}-${String(start[3]).padStart(2, '0')}`;
+  }
+
+  /*
+   * 总周数：不能只取第一个「共 N 周」。
+   * 真实课表里「实践课程: 军事技能黄薏(共3周)」会排在前面，
+   * 第一个匹配到的是 3 周，不是学期总周数。
+   * 所以把所有「共 N 周」都扫一遍，取落在合理范围（8~30）里的那个。
+   */
+  const totalRe = /共\s*(\d{1,2})\s*周/g;
+  let tm = totalRe.exec(src);
+  let best = null;
+  while (tm !== null) {
+    const n = Number(tm[1]);
+    if (n >= 8 && n <= 30) best = n;
+    tm = totalRe.exec(src);
+  }
+  if (best) out.totalWeeks = best;
+
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * 读出课表底部的「实践课程」（没有固定星期节次的那种）。
+ *   实践课程: 军事技能黄薏(共3周)/9-11周;
+ */
+function parsePracticeLines(rows) {
+  const out = [];
+  rows.forEach((row) => {
+    const line = row.join(' ').trim();
+    if (!/^实践课程|实践课\s*[:：]/.test(line)) return;
+
+    // 去掉「实践课程:」前缀
+    let body = line.replace(/^实践课程\s*[:：]?/, '').trim();
+
+    // 周次从行里抠出来
+    const weeks = (body.match(/(\d{1,2}\s*[-~－至]\s*\d{1,2}\s*周(?:\s*[,，]\s*\d{1,2}\s*周)*)/) || [])[1] || '';
+    body = body.replace(weeks, ' ').trim();
+
+    // 名字：去掉结尾的括号说明（(共3周)）和教师名（中文 2~4 字）
+    body = body.replace(/[（(][^)）]*[)）]/g, ' ').replace(/[\/；;]+$/, '').trim();
+
+    // 「军事技能黄薏」→ 名字里很难切出教师，保留原文当课程名更安全
+    const name = body.split(/\s+/)[0];
+    if (!name) return;
+
+    out.push({ name, weeks });
+  });
+  return out;
+}
+
+/**
  * 统一入口：一段文本 → 课程数组。
  * 自动判断是「网格表」还是「一行一门课」。
  *
  * @param {string} text
  * @param {Object} keywords COLUMN_KEYWORDS
- * @returns {{courses:Array, kind:string}}
+ * @returns {{courses:Array, kind:string, semester:Object|null}}
  */
 export function parseText(text, keywords) {
   const rows = splitTable(text);
-  if (!rows.length) return { courses: [], kind: 'empty' };
+  if (!rows.length) return { courses: [], kind: 'empty', semester: null };
 
   // .ics 内容也走文本，先认一下
   if (/BEGIN:VCALENDAR/i.test(text)) {
-    return { courses: parseICS(text), kind: 'ics' };
+    return { courses: parseICS(text), kind: 'ics', semester: null };
   }
 
+  // 底部「实践课程」：没有固定时间，单独收集
+  const practice = parsePracticeLines(rows);
+  const semester = parseSemesterInfo(text);
+
+  const withPractice = (courses) => courses.concat(practice.map((p) => makeCourse({
+    name: p.name,
+    room: '',
+    teacher: '',
+    day: 1,
+    weeks: p.weeks ? parseWeeks(p.weeks) : null,
+    noSlot: true,
+    confidence: 0.7,
+  })));
+
   if (looksLikeMatrix(rows)) {
-    return { courses: parseMatrix(rows), kind: 'matrix' };
+    return { courses: withPractice(parseMatrix(rows)), kind: 'matrix', semester };
   }
 
   const { headerRow, mapping, score } = detectMapping(rows, keywords);
 
   // 表头认得太少（低于 2 列）→ 当成「没有表头，按位置猜」
   if (score < 2) {
-    return { courses: parseTable(rows, guessMappingByContent(rows), -1), kind: 'position' };
+    return {
+      courses: withPractice(parseTable(rows, guessMappingByContent(rows), -1)),
+      kind: 'position',
+      semester,
+    };
   }
 
-  return { courses: parseTable(rows, mapping, headerRow), kind: 'table' };
+  return {
+    courses: withPractice(parseTable(rows, mapping, headerRow)),
+    kind: 'table',
+    semester,
+  };
 }
 
 /**

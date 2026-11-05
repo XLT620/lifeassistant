@@ -19,7 +19,7 @@ import {
 import * as store from './store.js';
 import { recognizeTimetable, AIError } from './ai.js';
 import {
-  parseText, parseXLSX, makeCourse, parseWeeks, isCourseInWeek,
+  parseText, parseXLSX, makeCourse, parseWeeks, isCourseInWeek, parsePeriodTimes,
 } from './parseTable.js';
 
 /* ---------------------------------------------------------------- 状态 */
@@ -532,8 +532,16 @@ async function handleFilePick(event) {
     if (name.endsWith('.xlsx')) {
       const buffer = await file.arrayBuffer();
       const rows = await parseXLSX(buffer);
-      // 把二维表拼回制表符分隔的文本，复用统一解析
-      const text = rows.map((r) => r.join('\t')).join('\n');
+      /*
+       * 把二维表拼回制表符分隔的文本，复用统一解析。
+       *
+       * ⚠️ 单元格内部可能有换行（一格压着多门课，真实课表就是这样），
+       * 直接 join 会把一行拆成好几行、列位置全乱。
+       * 所以先把格内换行换成「；」，解析器再按「；」拆成多门课。
+       */
+      const text = rows
+        .map((r) => r.map((cell) => String(cell ?? '').replace(/\r?\n/g, '；')).join('\t'))
+        .join('\n');
       handleText(text, file.name, true);
       return;
     }
@@ -561,9 +569,34 @@ function handleText(text, label, alreadyBusy) {
   }
 
   try {
-    const { courses, kind } = parseText(text, COLUMN_KEYWORDS);
+    const { courses, kind, semester } = parseText(text, COLUMN_KEYWORDS);
+    let footerDateHint = '';
+
+    /*
+     * 顺手认一下「作息时间表」。
+     * 用户可能粘的是课表，也可能粘的是作息表（第 1 节 08:00-08:45 那种）。
+     * 认出来就存进设置 —— 之后时间轴和课前提醒用学校的真实作息。
+     */
+    const times = parsePeriodTimes(text);
+    let timesNote = '';
+    if (times.length >= 2) {
+      const s = store.loadSettings();
+      if (store.saveSettings({ ...s, periodTimes: times }).ok) {
+        timesNote = `已保存 ${times.length} 节课的作息时间`;
+        deps.notify(`${timesNote}（第 1 节 ${times[0].start}）`);
+      }
+    }
 
     if (!courses.length) {
+      // 只粘了作息表也算成功
+      if (times.length >= 2) {
+        renderError(
+          `已认出 ${times.length} 节课的上课时间，但这段内容里没有课程。`
+            + '现在去「导入」重新选课表吧。',
+          () => renderChoose(),
+        );
+        return;
+      }
       renderError(
         '没能从这段内容里认出课程。请确认复制的是课表（含星期和课程名）。',
         () => renderFileStep(),
@@ -571,14 +604,40 @@ function handleText(text, label, alreadyBusy) {
       return;
     }
 
+    /*
+     * 只自动填入**总周数**（这个没歧义）。
+     *
+     * ⚠️ 绝对不要自动填「开学日期」：
+     *   课表页脚写的是「本学期 2026-08-31 正式上课」，
+     *   但那是**开始上课**的日期，不等于**开学日期**。
+     *   真实情况可能是 9/5 开学、9/7 才启用课表 —— 中间那周本来没有课。
+     *   自动把它填成开学日期，第 1 周就会冒出课来。
+     *   所以两个日期一律由用户自己填，这里只提示一下页脚写了什么。
+     */
+    let semesterNote = '';
+    if (semester && semester.totalWeeks) {
+      const s = store.loadSettings();
+      if (store.saveSettings({ ...s, totalWeeks: semester.totalWeeks }).ok) {
+        semesterNote = `已填入总周数 ${semester.totalWeeks} 周`;
+      }
+    }
+
+    if (semester && semester.termStartDate) {
+      footerDateHint = `课表页脚写着「${semester.termStartDate} 正式上课」，` +
+        '但那不是开学日期 —— 请自己填「开学日期」和「课表启用日期」。';
+    }
+    if (semesterNote) deps.notify(`${semesterNote}，可在设置里改`);
+
+    const totalWeeks = Number(store.loadSettings().totalWeeks) || 20;
+
     pending = courses.map((course) => ({
-      course: applySemesterBounds(course, Number(store.loadSettings().totalWeeks) || 20),
+      course: applySemesterBounds(course, totalWeeks),
       checked: true,
       status: 'ok',
     }));
     sortPending();
     sourceLabel = `${label}（${kindName(kind)}）`;
-    renderConfirm();
+    renderConfirm(footerDateHint);
   } catch (err) {
     console.error('[import] 解析出错：', err);
     renderError(`解析出错：${err.message}`, () => renderFileStep());

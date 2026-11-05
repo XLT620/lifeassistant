@@ -13,7 +13,7 @@ import {
 import { STORAGE_KEYS, WEEKDAY_NAMES } from './constants.js';
 import * as store from './store.js';
 import {
-  renderWeekGrid, currentWeek, weekDateRange, timetableOffsetWeeks,
+  renderWeekGrid, currentWeek, weekDateRange, timetableOffsetWeeks, getPeriodTimes,
 } from './weekGrid.js';
 
 /* ---------------------------------------------------------------- 状态 */
@@ -21,6 +21,25 @@ import {
 let courses = [];
 let selectedDay = new Date().getDay();   // -1 = 全部；0–6 与 Date.getDay() 对齐
 let deps = { notify: () => {}, scheduleUndo: () => {} };
+
+/**
+ * 用当前的「上课时间」把课程的 start/end 重算一遍。
+ *
+ * 为什么需要：解析课表时会把节次按**内置默认作息**换算成具体时间存下来。
+ * 用户在设置里改了学校真实作息后，旧的 start/end 就过期了。
+ * 这里统一在读取时重算，列表、详情、课前提醒才不会显示错时间。
+ */
+function resolveTimes(list) {
+  const settings = store.loadSettings();
+  const times = getPeriodTimes(settings);
+  return list.map((c) => {
+    if (!c.startPeriod) return c;
+    const t1 = times.find((x) => x.period === Number(c.startPeriod));
+    if (!t1) return c;
+    const t2 = times.find((x) => x.period === Number(c.endPeriod));
+    return { ...c, start: t1.start, end: (t2 || t1).end };
+  });
+}
 
 /** 'week' = 周视图（默认），'list' = 原来的列表 + 添加表单 */
 let viewMode = 'week';
@@ -42,7 +61,7 @@ let viewWeek = null;
 export function initSchedule(dependencies) {
   deps = { ...deps, ...dependencies };
 
-  courses = store.loadCourses();
+  courses = resolveTimes(store.loadCourses());
 
   // 表单提交
   const form = $('#courseForm');
@@ -105,30 +124,55 @@ function bindWeekNav() {
     renderWeek();
   });
 
-  // 课程表页里直接填「开学日期」/「课表第一周的周一」
+  /*
+   * 课程表页里直接填两个日期。
+   *
+   *   ① 开学日期   → 它所在那一周 = 第 1 周
+   *   ② 课表启用日期 → 在这之前不显示任何课程
+   *
+   * 两个都必填：只填一个的话，「第几周」和「什么时候开始有课」
+   * 就有一半要靠猜，而猜错的表现正是「开学前冒出课程」。
+   */
   $('#weekSetupSave')?.addEventListener('click', () => {
     const termInput = $('#weekSetupTermDate');
     const startInput = $('#weekSetupDate');
     const termValue = termInput ? termInput.value : '';
     const startValue = startInput ? startInput.value : '';
 
-    if (!termValue && !startValue) {
-      deps.notify('请至少选一个日期');
+    if (!termValue) {
+      deps.notify('请先填「开学日期」');
+      if (termInput) termInput.focus();
+      return;
+    }
+    if (!startValue) {
+      deps.notify('请再填「课表启用日期」（和开学同一天也行）');
+      if (startInput) startInput.focus();
       return;
     }
 
     const settings = store.loadSettings();
-    const next = { ...settings };
-    if (termValue) next.termStartDate = termValue;
-    if (startValue) next.timetableStartDate = startValue;
-
-    const result = store.saveSettings(next);
+    const result = store.saveSettings({
+      ...settings,
+      termStartDate: termValue,
+      timetableStartDate: startValue,
+    });
     if (!result.ok) {
       deps.notify('保存失败，请重试');
       return;
     }
+
+    // 课表启用日比开学周还早 → 说明填错了，提醒一句（仍保存，按第 1 周算）
+    const termMonday = new Date(`${termValue}T00:00:00`);
+    termMonday.setDate(termMonday.getDate() - ((termMonday.getDay() + 6) % 7));
+    const startMonday = new Date(`${startValue}T00:00:00`);
+    startMonday.setDate(startMonday.getDate() - ((startMonday.getDay() + 6) % 7));
+    if (startMonday.getTime() < termMonday.getTime()) {
+      deps.notify('课表启用日期比开学周还早，已按开学那周算，请确认一下');
+    } else {
+      deps.notify('已保存');
+    }
+
     viewWeek = null;
-    deps.notify('已保存，周次和日期会对上了');
     renderWeek();
   });
 }
@@ -162,7 +206,7 @@ export function renderSchedule() {
 
 /** 从存储重新读一遍课程（导入之后用） */
 export function reloadCourses() {
-  courses = store.loadCourses();
+  courses = resolveTimes(store.loadCourses());
   renderSchedule();
   checkReminder();
 }
@@ -201,10 +245,13 @@ function renderWeek() {
   }
 
   if (subEl) {
-    const hasBase = settings.termStartDate || settings.timetableStartDate;
+    const hasTerm = Boolean(settings.termStartDate);
+    const hasStart = Boolean(settings.timetableStartDate);
 
-    if (!hasBase) {
-      subEl.textContent = '还没设置开学日期，先按第 1 周显示';
+    if (!hasTerm || !hasStart) {
+      subEl.textContent = !hasTerm
+        ? '还没填开学日期，先按第 1 周显示'
+        : '还没填课表启用日期，先按开学当周算';
       subEl.dataset.warn = '1';
     } else {
       delete subEl.dataset.warn;
@@ -225,9 +272,9 @@ function renderWeek() {
       if (range) parts.push(`${range.from}–${range.to}`);
       parts.push(`共 ${totalWeeks} 周`);
 
-      // 开学周 ≠ 课表实施周时，额外标出「课表第几周」
+      // 开学周 ≠ 课表启用周时，额外标出「课表第几周」
       if (offset > 0) {
-        parts.push(courseWeek >= 1 ? `课表第 ${courseWeek} 周` : '课表还没开始');
+        parts.push(courseWeek >= 1 ? `课表第 ${courseWeek} 周` : '课表还没启用');
       }
 
       subEl.textContent = parts.join(' · ');
@@ -238,10 +285,10 @@ function renderWeek() {
   const todayBtn = $('#weekTodayBtn');
   if (todayBtn) todayBtn.hidden = !inTerm || week === base;
 
-  // 没有基准日期时，把输入框直接摆在课程表页上（藏在设置里用户找不到）
+  // 没填全两个日期时，把输入框直接摆在课程表页上（藏在设置里用户找不到）
   const setup = $('#weekSetup');
   if (setup) {
-    const needSetup = !(settings.termStartDate || settings.timetableStartDate);
+    const needSetup = !(settings.termStartDate && settings.timetableStartDate);
     setup.hidden = !needSetup;
     if (needSetup) {
       const termInput = $('#weekSetupTermDate');

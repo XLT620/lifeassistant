@@ -580,7 +580,14 @@ const TIMETABLE_PROMPT = [
   '  没有作息表就返回空数组 []，**不要凭猜测编时间**。',
   '',
   '⚠️ 其它规则：',
-  '1. 一格里的文字形如「课程名-教师@地点」，拆成 name / teacher / room 三个字段。',
+  '1. 一格里的文字有两种常见格式，都要能拆：',
+  '   ①「课程名-教师@地点」→ 拆成 name / teacher / room',
+  '   ② 斜杠格式（真实教务系统导出常见）：',
+  '        劳动教育1/(1-2节)3-8周,12周/天麟校区科602/黄薏/1/16',
+  '      顺序是：课程 / 节次+周次 / 校区+地点 / 教师 / 学分 / 学时。',
+  '      上例应拆成：name=劳动教育1、startPeriod=1、endPeriod=2、',
+  '      weeks="3-8周,12周"、room=天麟校区科602、teacher=黄薏。',
+  '      注意周次可能是逗号列表 —— "3-8周,12周" 里的 12 是**单周**，原样写进 weeks。',
   '2. 认不出的格子宁可不输出，也不要编造。',
   '3. 多张图时请**合并**：课表给 cells，作息表给 periodTimes，不要重复输出同一门课。',
   '4. 星期和节次**必须来自图片**。看不出星期几就不要输出这个格子 ——',
@@ -589,6 +596,9 @@ const TIMETABLE_PROMPT = [
   '   {"cells":[],"noSlotCourses":[],"periodTimes":[],"weekdayHeaderDetected":false,"periodColumnDetected":false,"confidence":0,"notes":"看不清"}',
   '6. weekdayHeaderDetected = 有没有认出「周一/周二…」这一行表头。',
   '7. periodColumnDetected = 有没有认出「一二节/三四节…」这一列行标题。',
+  '8. 课表底部如果有「实践课程」，放进 noSlotCourses（它们没有固定星期和节次）。',
+  '9. 课表底部如果有「本学期 2026-08-31 正式上课 … 共 20 周」，',
+  '   在 JSON 顶层加上 "termStartDate":"2026-08-31" 和 "semesterWeeks":20。',
 ].join('\n');
 
 /**

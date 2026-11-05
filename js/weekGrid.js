@@ -359,21 +359,34 @@ function fmt(min) {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-/** 把课程的时间解析成分钟；没写时间就用节次换算 */
+/**
+ * 把课程的时间解析成分钟。
+ *
+ * ⚠️ 优先级：**节次 > 写死的时间**。
+ *
+ * 为什么这样：解析课表时（makeCourse）会用**内置默认作息**把节次换算成
+ * 具体时间存进 course.start。如果渲染时优先读它，那么用户在设置里
+ * 填的学校真实作息就永远不生效 —— 表现就是「第 5 节显示 14:00，
+ * 而学校其实是 14:30」。
+ *
+ * 节次是原始数据、作息是可配置的，所以要用「节次 + 当前作息」现算。
+ * 只有没有节次的课（手动填的）才用写死的时间。
+ */
 function courseMinutes(course, periodTimes = PERIOD_TIMES) {
   const times = periodTimes && periodTimes.length ? periodTimes : PERIOD_TIMES;
-  let s = timeToMinutes(course.start);
-  let e = timeToMinutes(course.end);
 
-  if (s === null || e === null) {
-    const p = coursePeriods(course, times);
-    if (p) {
-      const t1 = times.find((x) => x.period === p.startPeriod);
-      const t2 = times.find((x) => x.period === p.endPeriod);
-      if (s === null && t1) s = timeToMinutes(t1.start);
-      if (e === null && t2) e = timeToMinutes(t2.end);
-    }
+  const p = coursePeriods(course, times);
+  if (p) {
+    const t1 = times.find((x) => x.period === p.startPeriod);
+    const t2 = times.find((x) => x.period === p.endPeriod);
+    const s = t1 ? timeToMinutes(t1.start) : null;
+    const e = t2 ? timeToMinutes(t2.end) : null;
+    if (s !== null && e !== null && e > s) return { start: s, end: e };
   }
+
+  // 兜底：课程自己写了具体时间（手动添加的课）
+  const s = timeToMinutes(course.start);
+  const e = timeToMinutes(course.end);
   if (s === null || e === null || e <= s) return null;
   return { start: s, end: e };
 }
