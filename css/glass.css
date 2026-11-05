@@ -1,0 +1,405 @@
+/* ==========================================================================
+   玻璃视觉层（Glassmorphism）
+   --------------------------------------------------------------------------
+   这一层**只做视觉**，不改结构、不改 JS：
+   所有选择器都是覆盖前面的 base / components / course / settings，
+   所以任何一条删掉都会退回原来的样子，不会把功能弄坏。
+
+   四个设计决定（对应「磨砂玻璃 + 分层悬浮」的四条要求）：
+
+   1. 玻璃模糊 + 透明度：--glass-bg 用半透明白，
+      配合 backdrop-filter: blur() saturate()，让背景色透上来。
+      透明度分三档（弱 / 中 / 强），越靠近内容的层越不透明，
+      这样字始终看得清 —— 全透明会糊成一团。
+
+   2. 投影分三级：--shadow-1/2/3。
+      贴在页面上的（卡片）用 1-2 级，浮起来的（Tab 栏、弹层）用 3 级。
+      投影颜色带一点主色调，比纯黑更"通透"。
+
+   3. 留白比例：卡片内边距 18px、卡片间距 14px，
+      标题与内容之间 4px 的"呼吸缝"，
+      数字/图标与文字之间留 8px —— 这几档是让界面不挤的关键。
+
+   4. 主辅色渐变：--grad-brand 用 primary → primary-light，
+      --grad-accent 用 accent → accent-light。
+      大面积（顶栏、主按钮）用主色渐变，小面积点缀（徽标、进度）用辅色，
+      避免两种渐变抢同一个视觉层级。
+   ========================================================================== */
+
+:root,
+:root[data-theme="light"] {
+  /* ---- 玻璃面：三档不透明度 ---- */
+  --glass-weak: rgba(255, 255, 255, 0.26);
+  --glass-base: rgba(255, 255, 255, 0.44);
+  --glass-strong: rgba(255, 255, 255, 0.68);
+
+  /* 玻璃高光边（顶部 1px 亮线，模拟玻璃厚度） */
+  --glass-border: rgba(255, 255, 255, 0.7);
+  --glass-outline: rgba(255, 255, 255, 0.35);
+
+  /* 模糊强度：卡片轻一点，弹层重一点 */
+  --blur-card: 16px;
+  --blur-bar: 24px;
+  --blur-sheet: 30px;
+
+  /* ---- 投影：三级 ---- */
+  --shadow-1: 0 1px 2px rgba(45, 52, 54, 0.05), 0 1px 3px rgba(45, 52, 54, 0.06);
+  --shadow-2: 0 6px 18px rgba(45, 52, 54, 0.09), 0 2px 6px rgba(45, 52, 54, 0.05);
+  --shadow-3: 0 18px 44px rgba(45, 52, 54, 0.16), 0 6px 14px rgba(45, 52, 54, 0.08);
+
+  /* ---- 渐变：主色 / 辅色 ---- */
+  --grad-brand: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+  --grad-accent: linear-gradient(135deg, var(--accent) 0%, var(--accent-light) 100%);
+  --grad-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0));
+
+  /* ---- 页面底色（玻璃靠它透上来） ---- */
+  --page-base: #F4F0EA;
+}
+
+:root[data-theme="dark"] {
+  --glass-weak: rgba(44, 38, 32, 0.42);
+  --glass-base: rgba(38, 33, 28, 0.62);
+  --glass-strong: rgba(32, 28, 24, 0.82);
+
+  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-outline: rgba(255, 255, 255, 0.08);
+
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --shadow-3: 0 18px 44px rgba(0, 0, 0, 0.6);
+
+  --page-base: #14100D;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --glass-weak: rgba(44, 38, 32, 0.42);
+    --glass-base: rgba(38, 33, 28, 0.62);
+    --glass-strong: rgba(32, 28, 24, 0.82);
+
+    --glass-border: rgba(255, 255, 255, 0.14);
+    --glass-outline: rgba(255, 255, 255, 0.08);
+
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-2: 0 6px 18px rgba(0, 0, 0, 0.45);
+    --shadow-3: 0 18px 44px rgba(0, 0, 0, 0.6);
+
+    --page-base: #14100D;
+  }
+}
+
+/* ==========================================================================
+   1. 页面底：柔和的多点渐变，玻璃才有东西可以"糊"
+   --------------------------------------------------------------------------
+   ⚠️ 这里有个坑：一开始我用 body::before + z-index:-1 画渐变，
+   结果 body 自己也有 background，负 z-index 的伪元素被 body 背景整块盖住，
+   玻璃完全透不出东西。
+   改成直接把渐变写在 body 上（body 不滚动，滚动的是 .app-main，
+   所以不需要 background-attachment: fixed）。
+   ========================================================================== */
+
+html {
+  background: var(--page-base);
+}
+
+body {
+  background-color: var(--page-base);
+  background-image:
+    radial-gradient(520px 420px at 14% 22%, rgba(74, 124, 111, 0.55), transparent 66%),
+    radial-gradient(460px 380px at 88% 34%, rgba(232, 152, 94, 0.5), transparent 64%),
+    radial-gradient(620px 480px at 30% 74%, rgba(91, 143, 199, 0.42), transparent 66%),
+    radial-gradient(480px 400px at 92% 88%, rgba(199, 91, 122, 0.34), transparent 64%);
+}
+
+:root[data-theme="dark"] body {
+  background-image:
+    radial-gradient(520px 420px at 14% 22%, rgba(74, 124, 111, 0.6), transparent 66%),
+    radial-gradient(460px 380px at 88% 34%, rgba(232, 152, 94, 0.32), transparent 64%),
+    radial-gradient(620px 480px at 30% 74%, rgba(76, 107, 138, 0.55), transparent 66%),
+    radial-gradient(480px 400px at 92% 88%, rgba(140, 107, 177, 0.34), transparent 64%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) body {
+    background-image:
+      radial-gradient(520px 420px at 14% 22%, rgba(74, 124, 111, 0.6), transparent 66%),
+      radial-gradient(460px 380px at 88% 34%, rgba(232, 152, 94, 0.32), transparent 64%),
+      radial-gradient(620px 480px at 30% 74%, rgba(76, 107, 138, 0.55), transparent 66%),
+      radial-gradient(480px 400px at 92% 88%, rgba(140, 107, 177, 0.34), transparent 64%);
+  }
+}
+
+/* ==========================================================================
+   2. 顶栏：半透明渐变 + 模糊，底部一条玻璃高光线
+   ========================================================================== */
+
+.app-header {
+  background: linear-gradient(
+    135deg,
+    rgba(74, 124, 111, 0.92) 0%,
+    rgba(107, 163, 150, 0.82) 100%
+  );
+  -webkit-backdrop-filter: blur(var(--blur-bar)) saturate(150%);
+  backdrop-filter: blur(var(--blur-bar)) saturate(150%);
+  box-shadow: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+:root[data-theme="dark"] .app-header {
+  background: linear-gradient(
+    135deg,
+    rgba(58, 98, 89, 0.92) 0%,
+    rgba(74, 124, 111, 0.8) 100%
+  );
+}
+
+/* 顶栏里那条提示条也做成玻璃 */
+.reminder-banner {
+  background: rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: none;
+}
+
+/* ==========================================================================
+   3. 卡片：玻璃面 + 分级投影
+   ========================================================================== */
+
+.card {
+  background: var(--glass-base);
+  -webkit-backdrop-filter: blur(20px) saturate(190%);
+  backdrop-filter: blur(20px) saturate(190%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-2);
+  padding: 18px;
+}
+
+/* 卡片顶部一道高光，像玻璃的厚度 */
+.card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 42%;
+  border-radius: inherit;
+  background: var(--grad-sheen);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.card {
+  position: relative;
+  overflow: hidden;
+}
+
+/* 卡片内的内容要压在 ::before 上面 */
+.card > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* 卡片标题：和内容之间留 4px 呼吸缝 */
+.card-title {
+  margin-bottom: 10px;
+  letter-spacing: 0.2px;
+}
+
+/* ==========================================================================
+   4. 底部 Tab：脱离底边、悬浮的胶囊
+   ========================================================================== */
+
+.app-tabbar {
+  margin: 0 12px calc(10px + var(--safe-bottom));
+  padding: 6px;
+  border-radius: 24px;
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(var(--blur-bar)) saturate(160%);
+  backdrop-filter: blur(var(--blur-bar)) saturate(160%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-3);
+}
+
+.tab-btn {
+  border-radius: 18px;
+  transition: background 0.18s ease, color 0.18s ease;
+}
+
+.tab-btn.active {
+  background: var(--grad-brand);
+  color: var(--text-on-primary);
+  box-shadow: var(--shadow-1);
+}
+
+/* ==========================================================================
+   5. 主按钮 / 次按钮
+   ========================================================================== */
+
+.btn-primary {
+  background: var(--grad-brand);
+  box-shadow: 0 6px 16px rgba(74, 124, 111, 0.28);
+  border: none;
+}
+
+.btn-primary:active {
+  box-shadow: 0 3px 10px rgba(74, 124, 111, 0.24);
+  transform: translateY(1px);
+}
+
+.btn-ghost {
+  background: var(--glass-base);
+  -webkit-backdrop-filter: blur(var(--blur-card));
+  backdrop-filter: blur(var(--blur-card));
+  border: 1px solid var(--glass-border);
+}
+
+/* 分段控件（列表 / 周视图）做成玻璃胶囊 */
+.segmented {
+  background: var(--glass-base);
+  -webkit-backdrop-filter: blur(var(--blur-card));
+  backdrop-filter: blur(var(--blur-card));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-1);
+}
+
+.segmented-btn.active {
+  background: var(--glass-strong);
+  box-shadow: var(--shadow-1);
+}
+
+/* ==========================================================================
+   6. 课程表：周导航、网格、无课表条
+   ========================================================================== */
+
+.week-nav {
+  background: var(--glass-base);
+  -webkit-backdrop-filter: blur(20px) saturate(190%);
+  backdrop-filter: blur(20px) saturate(190%);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-2);
+}
+
+/* 网格容器：更透一点，让课程块跳出来 */
+.wk-body,
+.wk-head {
+  background: transparent;
+}
+
+.wk-grid-wrap,
+#weekView > .card {
+  background: var(--glass-weak);
+  -webkit-backdrop-filter: blur(var(--blur-card)) saturate(130%);
+  backdrop-filter: blur(var(--blur-card)) saturate(130%);
+}
+
+/* 课程块：投影让它们"浮"在网格上 */
+.wk-block {
+  box-shadow: 0 2px 6px rgba(45, 52, 54, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+.wk-noslot {
+  background: var(--glass-base);
+  -webkit-backdrop-filter: blur(var(--blur-card));
+  backdrop-filter: blur(var(--blur-card));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-1);
+}
+
+/* 两个日期输入卡片 */
+.week-setup {
+  background: var(--glass-base);
+  -webkit-backdrop-filter: blur(var(--blur-card)) saturate(140%);
+  backdrop-filter: blur(var(--blur-card)) saturate(140%);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-2);
+}
+
+/* ==========================================================================
+   7. 导入弹层：玻璃更厚，顶部圆角
+   ========================================================================== */
+
+.import-panel {
+  background: var(--glass-strong);
+  -webkit-backdrop-filter: blur(var(--blur-sheet)) saturate(160%);
+  backdrop-filter: blur(var(--blur-sheet)) saturate(160%);
+  border-top: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-3);
+  border-radius: 22px 22px 0 0;
+}
+
+.modal-overlay {
+  background: rgba(28, 24, 20, 0.28);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+}
+
+/* 导入选项行也玻璃化 */
+.import-opt {
+  background: var(--glass-base);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-1);
+}
+
+.import-opt.primary {
+  background: linear-gradient(
+    135deg,
+    rgba(74, 124, 111, 0.16),
+    rgba(107, 163, 150, 0.1)
+  );
+  border-color: rgba(74, 124, 111, 0.4);
+}
+
+/* ==========================================================================
+   8. 设置页 / 列表项
+   ========================================================================== */
+
+.course-item {
+  border-radius: var(--radius);
+  transition: background 0.15s ease;
+}
+
+.palette-row {
+  border-radius: 10px;
+}
+
+.palette-row.active {
+  background: var(--glass-weak);
+}
+
+/* 输入框：内嵌在玻璃里，不要自己再叠一层白 */
+.form-input,
+.form-select,
+.form-textarea {
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid var(--glass-outline);
+  box-shadow: inset 0 1px 2px rgba(45, 52, 54, 0.06);
+}
+
+:root[data-theme="dark"] .form-input,
+:root[data-theme="dark"] .form-select,
+:root[data-theme="dark"] .form-textarea {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+/* ==========================================================================
+   9. 无障碍：系统开了「降低透明度」就退回实色
+   ========================================================================== */
+
+@media (prefers-reduced-transparency: reduce) {
+  .card,
+  .app-tabbar,
+  .week-nav,
+  .week-setup,
+  .import-panel,
+  .btn-ghost,
+  .segmented,
+  .form-input,
+  .form-select,
+  .form-textarea {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--card);
+  }
+}
