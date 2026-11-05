@@ -64,6 +64,14 @@
   font-size: 0.6rem;
 }
 
+/* 每个日期下面的一行说明 */
+.week-setup-note {
+  margin: -2px 0 10px 124px;
+  font-size: 0.64rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
 .week-setup-row .form-input {
   flex: 1;
   min-width: 0;
