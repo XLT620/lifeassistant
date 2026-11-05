@@ -16,7 +16,7 @@
    ========================================================================== */
 
 import { $, el, clear } from './utils.js';
-import { DEFAULT_SETTINGS } from './constants.js';
+import { DEFAULT_SETTINGS, COURSE_PALETTES } from './constants.js';
 import * as store from './store.js';
 import { testConnection, AIError } from './ai.js';
 
@@ -86,6 +86,7 @@ export function renderSettings() {
   if (!root) return;
   clear(root);
 
+  root.appendChild(buildPaletteSection());
   root.appendChild(buildTermSection());
   root.appendChild(buildAISection());
   root.appendChild(buildGoalSection());
@@ -93,53 +94,92 @@ export function renderSettings() {
   root.appendChild(buildAboutSection());
 }
 
+/* ---------------------------------------------------------------- 课表配色 */
+
+/**
+ * 课表配色选择器。
+ *
+ * 交互照参考产品做的：一行一个方案 —— 左边一条 5 色渐变条，中间名字 + 一句话，
+ * 右边单选圈。点整行即生效，周视图立刻换色（不用点保存）。
+ */
+function buildPaletteSection() {
+  const settings = store.loadSettings();
+  const current = settings.coursePalette || DEFAULT_SETTINGS.coursePalette;
+
+  const card = el('div', { class: 'card' }, [
+    el('div', { class: 'card-title' }, ['🎨', ' 课表配色']),
+    el('div', {
+      class: 'form-hint',
+      text: '选一套喜欢的配色，课程色块会立刻更新。同一门课永远是同一个颜色。',
+    }),
+  ]);
+
+  const list = el('div', { class: 'palette-list' });
+
+  const renderRows = (activeId) => {
+    clear(list);
+    COURSE_PALETTES.forEach((p) => {
+      const active = p.id === activeId;
+
+      // 5 个色块拼成一条，右边圆角靠 CSS 处理
+      const swatch = el('div', { class: 'palette-swatch' },
+        p.colors.slice(0, 5).map((c) => el('span', { style: { background: c.bg } })));
+
+      const row = el('button', {
+        type: 'button',
+        class: `palette-row${active ? ' active' : ''}`,
+        'aria-pressed': active ? 'true' : 'false',
+        onclick: () => {
+          const result = persist({ coursePalette: p.id }, { notifyText: `已换成「${p.name}」` });
+          if (result) renderRows(p.id);
+        },
+      }, [
+        swatch,
+        el('div', { class: 'palette-info' }, [
+          el('div', { class: 'palette-name', text: p.name }),
+          el('div', { class: 'palette-desc', text: p.desc }),
+        ]),
+        el('span', { class: `palette-radio${active ? ' on' : ''}`, 'aria-hidden': 'true' }),
+      ]);
+
+      list.appendChild(row);
+    });
+  };
+
+  renderRows(current);
+  card.appendChild(list);
+  return card;
+}
+
+
 /* ---------------------------------------------------------------- 学期 */
 
 /**
  * 学期设置。
  *
- * 这里有两个日期，为什么不能合成一个：
+ * 两个日期的分工（用户明确要求）：
  *
- *   教务处公布的开学日（第 1 周） ≠ 课表实际执行的第 1 周。
- *   比如 9 月 1 日开学，但前两周军训，课表从 9 月 15 日才开始按「第 1 周」走。
- *   学生手里的课表写「第 1 周」，对应的真实日期是 9 月 15 日。
+ *   ① 开学日期（termStartDate）
+ *      它所在的那一周 = **第 1 周**。开学日可以是周三、周六，取那一周的周一。
+ *      界面上显示的「第 N 周」就是这个周次。
  *
- *   周视图显示的日期、「本周」判断、单双周，都必须用
- *   「课表第 1 周」那个日期（timetableStartDate），
- *   否则整个学期会错开几周 —— 这就是用户报的「本周日期和课表日期不匹配」。
+ *   ② 课表第一周的周一（timetableStartDate）—— 可选
+ *      课表实际开始按「第 1 周」上课的那一周。
+ *      教务处的开学周和它可能不是同一周（中间夹军训）。
+ *      填了之后会自动算出 offset：「课表第 k 周」= 学期第 (k + offset) 周，
+ *      周次下面也会显示「课表第几周」，方便和教务系统核对。
+ *
+ *   例：开学日 9/5（周六）→ 那周是第 1 周；
+ *       课表从 9/7 那周开始 → 那是第 2 周（offset = 1）。
  */
 function buildTermSection() {
   const card = el('div', { class: 'card' }, [
     el('div', { class: 'card-title' }, ['📅', ' 学期设置']),
   ]);
 
-  // ---- 课表基准日期（决定周视图画哪一周）
+  // ---- 开学日期（决定第 1 周）
   card.appendChild(el('div', { class: 'form-group' }, [
-    el('label', { class: 'form-label', for: 'timetableStartInput', text: '课表第 1 周的周一' }),
-    el('input', {
-      class: 'form-input',
-      id: 'timetableStartInput',
-      type: 'date',
-      value: settings.timetableStartDate || '',
-      onchange: (e) => persist({ timetableStartDate: e.target.value }, { notifyText: '已保存' }),
-    }),
-  ]));
-
-  card.appendChild(el('div', {
-    class: 'form-hint',
-    text: '这一项给周视图用：显示每天是几号、判断现在是第几周、算单双周。'
-      + '翻一下教务系统，看「第 1 周」是从哪个周一开始。'
-      + '拿不准就先填这个，下面那项留空会自动沿用它。',
-  }));
-
-  // ---- 教务处公布的开学日期（只用来提示学期第几周）
-  card.appendChild(el('div', {
-    class: 'form-group',
-    style: { marginTop: 'var(--space-md)' },
-  }, [
-    el('label', {
-      class: 'form-label', for: 'termStartInput', text: '教务处公布的开学日期（可留空）',
-    }),
+    el('label', { class: 'form-label', for: 'termStartInput', text: '开学日期' }),
     el('input', {
       class: 'form-input',
       id: 'termStartInput',
@@ -151,10 +191,33 @@ function buildTermSection() {
 
   card.appendChild(el('div', {
     class: 'form-hint',
-    text: '如果开学后先军训、课表晚几周才开始，就两个都填：'
-      + '上面填课表第 1 周那天，下面填教务处说的开学日。'
-      + '这样周视图会额外提示「学期第几周」，你能一眼核对两个周次对不对得上。'
-      + '两者其实是同一天，就只填上面那个。',
+    text: '开学日期所在的那一周算第 1 周。周视图的日期、「本周」、单双周都从这里算。'
+      + '不确定就问辅导员，或者看教务系统的校历。',
+  }));
+
+  // ---- 课表启用日期（在这之前不排课）
+  card.appendChild(el('div', {
+    class: 'form-group',
+    style: { marginTop: 'var(--space-md)' },
+  }, [
+    el('label', {
+      class: 'form-label', for: 'timetableStartInput', text: '课表启用日期',
+    }),
+    el('input', {
+      class: 'form-input',
+      id: 'timetableStartInput',
+      type: 'date',
+      value: settings.timetableStartDate || '',
+      onchange: (e) => persist({ timetableStartDate: e.target.value }, { notifyText: '已保存' }),
+    }),
+  ]));
+
+  card.appendChild(el('div', {
+    class: 'form-hint',
+    text: '在这个日期之前不会显示任何课程（开学后先军训那种）。'
+      + '例：9/5（周六）开学 → 8/31–9/6 那周是第 1 周；'
+      + '课表 9/7（周一）才启用 → 第 1 周没有课，第 2 周才是课表第 1 周。'
+      + '开学当周就上课的话，填和开学日期同一天。',
   }));
 
   // ---- 总周数

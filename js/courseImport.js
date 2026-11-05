@@ -24,10 +24,13 @@ import {
 
 /* ---------------------------------------------------------------- 状态 */
 
-let deps = { notify: () => {}, onImported: () => {} };
+let deps = { notify: () => {}, onImported: () => {}, onClearAll: () => {} };
 
 /** 待确认的课程：[{ course, checked, status }] */
 let pending = [];
+
+/** 生成后自查发现的问题：[{level:'error'|'warn', text}] */
+let selfChecks = [];
 let sourceLabel = '';
 let busy = false;
 
@@ -120,6 +123,25 @@ function renderChoose() {
     },
   }));
 
+  /*
+   * 一键清空：导入前先清掉旧的，是最常见的用法。
+   * 放在这里是因为用户「发现导入错了」的第一反应就是重新打开导入面板。
+   * 清空只删课程，饮食和日记不受影响。
+   */
+  const count = store.loadCourses().length;
+  if (count > 0) {
+    root.appendChild(el('button', {
+      type: 'button',
+      class: 'import-clear',
+      text: `清空全部 ${count} 门课程`,
+      onclick: () => {
+        // 先关掉遮罩再清空，否则撤销条会被弹层挡住
+        closeOverlay();
+        deps.onClearAll();
+      },
+    }));
+  }
+
   root.appendChild(el('div', { class: 'import-note' }, [
     el('span', { text: '🔒' }),
     el('span', {
@@ -191,6 +213,131 @@ function applySemesterBounds(course, totalWeeks) {
   course.startWeek = Math.max(1, Math.min(sw, total));
   course.endWeek = Math.max(course.startWeek, Math.min(ew, total));
   return course;
+}
+
+/* ============================================================ 自查 */
+
+/**
+ * 合并「同一门课、同一时间、同一周次」的重复条目。
+ *
+ * 真实课表里很常见：同一门课按教学班拆成两条（教师不同、教室相同），
+ * 例如临床医学的「医学细胞生物学」理论/实验两条。
+ * 它们在周视图里会叠成两块 —— 用户看到的就是「同一时间两门课」，
+ * 必然判定为识别错误。所以先合并成一条，教师用「、」连起来。
+ */
+export function mergeSameCourse(list) {
+  const out = [];
+  const seen = new Map();
+
+  list.forEach((course) => {
+    if (course.noSlot) { out.push(course); return; }
+
+    const key = [
+      norm(course.name),
+      Number(course.day) || 0,
+      Number(course.startPeriod) || 0,
+      Number(course.endPeriod) || 0,
+      weekKey(course),
+    ].join('|');
+
+    const hit = seen.get(key);
+    if (!hit) {
+      seen.set(key, course);
+      out.push(course);
+      return;
+    }
+
+    // 合并教师 / 教室（去重后拼接）
+    const mergeText = (a, b) => {
+      const parts = String(a || '').split(/[,，、]/).map((s) => s.trim()).filter(Boolean);
+      String(b || '').split(/[,，、]/).forEach((s) => {
+        const t = s.trim();
+        if (t && !parts.includes(t)) parts.push(t);
+      });
+      return parts.join('、');
+    };
+    hit.teacher = mergeText(hit.teacher, course.teacher);
+    if (!hit.room && course.room) hit.room = course.room;
+  });
+
+  return out;
+}
+
+/**
+ * 生成后自查。返回一组「需要用户注意的问题」。
+ *
+ * 依据用户给的判定标准：
+ *   1. 同一时间出现**不同课程** → 基本可以断定识别错了（重叠）
+ *   2. 学期中途有一两周**整周空白** → 大概率周次读错了
+ *
+ * @param {Array} list 课程数组（已合并、已裁学期）
+ * @param {number} totalWeeks
+ * @returns {Array<{level:'error'|'warn', text:string}>}
+ */
+export function selfCheck(list, totalWeeks) {
+  const issues = [];
+  const total = Math.max(1, Number(totalWeeks) || 20);
+  const slots = list.filter((c) => !c.noSlot && c.startPeriod);
+
+  // ---- 1. 不同课程撞同一时间（按周次交集判断，隔周上的不算）
+  const byDay = new Map();
+  slots.forEach((c) => {
+    const key = `${Number(c.day)}|${Number(c.startPeriod)}`;
+    if (!byDay.has(key)) byDay.set(key, []);
+    byDay.get(key).push(c);
+  });
+
+  byDay.forEach((group, key) => {
+    if (group.length < 2) return;
+    // 找出「同一周里真的同时出现、且不同名」的
+    const clash = new Map();
+    for (let w = 1; w <= total; w += 1) {
+      const active = group.filter((c) => isCourseInWeek(c, w));
+      const names = new Set(active.map((c) => norm(c.name)));
+      if (names.size > 1) {
+        const namesText = [...new Set(active.map((c) => c.name))].join(' / ');
+        clash.set(namesText, (clash.get(namesText) || 0) + 1);
+      }
+    }
+    if (clash.size) {
+      const [day, period] = key.split('|');
+      const namesText = [...clash.keys()][0];
+      issues.push({
+        level: 'error',
+        text: `${WEEKDAY_NAMES[Number(day)] || ''} 第 ${period} 节 同时有「${namesText}」`
+          + `（共 ${clash.get(namesText)} 周都撞在一起），基本可以断定识别错了`,
+      });
+    }
+  });
+
+  // ---- 2. 学期中途整周空白
+  const counts = [];
+  for (let w = 1; w <= total; w += 1) {
+    counts.push(slots.filter((c) => isCourseInWeek(c, w)).length);
+  }
+  const avg = counts.reduce((a, b) => a + b, 0) / Math.max(1, counts.length);
+
+  for (let w = 2; w < total; w += 1) {
+    const cur = counts[w - 1];
+    const prev = counts[w - 2];
+    const next = counts[w];
+    if (cur === 0 && prev >= 3 && next >= 3 && avg >= 3) {
+      issues.push({
+        level: 'warn',
+        text: `第 ${w} 周整周没有课（前后一周分别有 ${prev} / ${next} 门），`
+          + '大概率是某门课的周次没读对',
+      });
+    } else if (cur > 0 && cur * 3 <= avg && prev >= 3 && next >= 3 && avg >= 4) {
+      // 大面积空白：只有寥寥一两门，而全学期平均有十几门
+      issues.push({
+        level: 'warn',
+        text: `第 ${w} 周只有 ${cur} 门课（全学期平均 ${Math.round(avg)} 门，`
+          + `前后一周有 ${prev} / ${next} 门），可能周次读错了`,
+      });
+    }
+  }
+
+  return issues;
 }
 
 /* ============================================================ 排序 */
@@ -422,8 +569,9 @@ function applyRecognized(result) {
     return;
   }
 
-  pending = list.map((course) => ({ course, checked: true, status: 'ok' }));
+  pending = mergeSameCourse(list).map((course) => ({ course, checked: true, status: 'ok' }));
   sortPending();
+  selfChecks = selfCheck(pending.map((x) => x.course), totalWeeks);
   sourceLabel = '照片识别';
 
   // 整张图整体把握低时提醒一句
@@ -630,12 +778,14 @@ function handleText(text, label, alreadyBusy) {
 
     const totalWeeks = Number(store.loadSettings().totalWeeks) || 20;
 
-    pending = courses.map((course) => ({
+    // 先合并「同一门课同一时间」的重复条目，再裁学期、排序、自查
+    pending = mergeSameCourse(courses).map((course) => ({
       course: applySemesterBounds(course, totalWeeks),
       checked: true,
       status: 'ok',
     }));
     sortPending();
+    selfChecks = selfCheck(pending.map((x) => x.course), totalWeeks);
     sourceLabel = `${label}（${kindName(kind)}）`;
     renderConfirm(footerDateHint);
   } catch (err) {
@@ -670,6 +820,7 @@ function renderConfirm(notice = '') {
 
   const total = pending.length;
   const dupCount = pending.filter((x) => x.status === 'dup').length;
+  const replaceCount = pending.filter((x) => x.status === 'replace').length;
   const conflictCount = pending.filter((x) => x.status === 'conflict').length;
   const lowConf = pending.filter((x) => x.course.confidence < 0.7 && x.course.confidence > 0).length;
 
@@ -682,8 +833,22 @@ function renderConfirm(notice = '') {
     el('div', { class: 'import-ch-d', text: '点「改」可以改星期和节次；点方框可以取消勾选。' }),
   ]);
 
+  /*
+   * 把「总周数 + 两个日期」直接显示在核对页上。
+   * 这几个值一旦不对，整张课表都会错位（比如总周数被设成 21 而实际 20），
+   * 摆在这里用户一眼就能发现，不用去设置里翻。
+   */
+  const st = store.loadSettings();
+  const semText = [
+    `共 ${Number(st.totalWeeks) || 20} 周`,
+    st.termStartDate ? `开学 ${st.termStartDate}` : '还没填开学日期',
+    st.timetableStartDate ? `课表启用 ${st.timetableStartDate}` : '还没填课表启用日期',
+  ].join(' · ');
+  head.appendChild(el('div', { class: 'import-ch-sem', text: semText }));
+
   const flags = [];
-  if (dupCount) flags.push(`${dupCount} 条可能重复`);
+  if (replaceCount) flags.push(`${replaceCount} 条会替换库里的旧记录（周次不同）`);
+  if (dupCount) flags.push(`${dupCount} 条完全重复（已自动取消勾选）`);
   if (conflictCount) flags.push(`${conflictCount} 条时间冲突`);
   if (lowConf) flags.push(`${lowConf} 条把握不高`);
   if (notice) flags.unshift(notice);
@@ -692,6 +857,30 @@ function renderConfirm(notice = '') {
       el('span', { text: '⚠' }),
       el('span', { text: flags.join('；') }),
     ]));
+  }
+
+  /*
+   * 生成后自查的结果。
+   *
+   * 判定标准（用户给的）：
+   *   · 同一时间出现不同课程 → 必然识别错了
+   *   · 学期中途整周空白 → 大概率周次读错了
+   * 这里把具体哪一天、第几节、哪些课列出来，方便直接核对。
+   */
+  if (selfChecks.length) {
+    const errs = selfChecks.filter((x) => x.level === 'error');
+    const warns = selfChecks.filter((x) => x.level === 'warn');
+    const box = el('div', {
+      class: `import-selfcheck${errs.length ? ' has-error' : ''}`,
+    }, [
+      el('div', {
+        class: 'import-sc-title',
+        text: `自查发现 ${selfChecks.length} 处可疑${errs.length ? '（建议先核对再导入）' : ''}`,
+      }),
+    ]);
+    errs.forEach((x) => box.appendChild(el('div', { class: 'import-sc-item bad', text: `✗ ${x.text}` })));
+    warns.forEach((x) => box.appendChild(el('div', { class: 'import-sc-item warn', text: `! ${x.text}` })));
+    head.appendChild(box);
   }
 
   /*
@@ -775,7 +964,12 @@ function buildConfirmItem(item, index) {
 
   const flagRow = el('div', { class: 'import-flags' });
   if (item.status === 'dup') {
-    flagRow.appendChild(el('span', { class: 'import-flag warn', text: '可能重复：已有同名课程' }));
+    flagRow.appendChild(el('span', { class: 'import-flag warn', text: '完全重复：库里已有同名同时间的课' }));
+  } else if (item.status === 'replace') {
+    flagRow.appendChild(el('span', {
+      class: 'import-flag warn',
+      text: '会替换旧记录：库里同名课的时间一样，但周次不同',
+    }));
   } else if (item.status === 'conflict') {
     flagRow.appendChild(el('span', { class: 'import-flag bad', text: '与其他课时间重叠' }));
   }
@@ -799,7 +993,9 @@ function buildConfirmItem(item, index) {
   });
 
   const row = el('div', {
-    class: `import-row${item.status === 'dup' ? ' dup' : ''}${item.status === 'conflict' ? ' conflict' : ''}`,
+    class: `import-row${item.status === 'dup' ? ' dup' : ''}`
+      + `${item.status === 'conflict' ? ' conflict' : ''}`
+      + `${item.status === 'replace' ? ' replace' : ''}`,
   }, [ck, main, editBtn]);
 
   // ---- 编辑区（默认收起）
@@ -902,30 +1098,71 @@ function describeCourse(course) {
 const norm = (s) => String(s || '').replace(/\s/g, '');
 
 /**
+ * 把课程的周次规则压成一个可比较的字符串。
+ * 用于判断两条记录是不是「同一门课、同一周次」。
+ */
+function weekKey(course) {
+  if (Array.isArray(course.weeksRanges) && course.weeksRanges.length) {
+    return course.weeksRanges
+      .map((r) => `${Number(r.from)}-${Number(r.to)}-${r.parity || 'all'}`)
+      .sort()
+      .join(',');
+  }
+  return `${Number(course.startWeek) || 1}-${Number(course.endWeek) || 0}-${course.parity || 'all'}`;
+}
+
+/**
+ * 两条记录是不是「同名 + 同星期 + 同一时间」。
+ *
+ * ⚠️ 还要看教师：真实课表里同一门课会有「理论 ◆」和「实验 ◇」两条，
+ * 时间、周次完全一样，只有教师/教室不同。
+ * 如果只比名字和时间，第二条会被判成重复直接丢掉。
+ */
+function sameSlot(a, b) {
+  if (norm(a.name) !== norm(b.name)) return false;
+  if (Number(a.day) !== Number(b.day)) return false;
+  const x = timeToMinutes(a.start);
+  const y = timeToMinutes(b.start);
+  if (!(x !== null && y !== null && Math.abs(x - y) <= 5)) return false;
+
+  // 两边都写了教师、但教师不同 → 不是同一门课（理论/实验分开上）
+  const ta = norm(a.teacher);
+  const tb = norm(b.teacher);
+  if (ta && tb && ta !== tb) return false;
+
+  return true;
+}
+
+/**
  * 判断一门待导入课程与已有课程的关系。
- *   'dup'      完全重复（同名 + 同星期 + 开始时间相差 ≤5 分钟）
+ *   'dup'      真重复（同名 + 同星期 + 同时间 + **周次也一样**）
+ *   'replace'  同名同时间，但周次不同 → 库里的旧记录是错的，这次替换掉
  *   'conflict' 时间重叠但名字不同
  *   'ok'       没问题
+ *
+ * ⚠️ 以前只比名字和时间、不比周次，后果是：
+ *   库里留着上一版导入错的旧记录时，这次解析正确的会被判成重复并
+ *   默认不勾选、提交时跳过 —— 界面上显示的还是旧数据，
+ *   表现就是「某门课明明该有却不见了」。
  */
 function analyzeStatus(course, existing, batch) {
+  let sawSameSlot = false;
+
   for (const ex of existing) {
     if (ex.noSlot) continue;
-    if (norm(ex.name) !== norm(course.name)) continue;
-    if (Number(ex.day) !== Number(course.day)) continue;
-    const a = timeToMinutes(ex.start);
-    const b = timeToMinutes(course.start);
-    if (a !== null && b !== null && Math.abs(a - b) <= 5) return 'dup';
+    if (!sameSlot(ex, course)) continue;
+    if (weekKey(ex) === weekKey(course)) return 'dup';
+    sawSameSlot = true;
   }
 
   // 和本批次内其他行是否重复
   const others = batch.filter((x) => x.course !== course && !x.course.noSlot);
   for (const other of others) {
-    if (norm(other.course.name) !== norm(course.name)) continue;
-    if (Number(other.course.day) !== Number(course.day)) continue;
-    const a = timeToMinutes(other.course.start);
-    const b = timeToMinutes(course.start);
-    if (a !== null && b !== null && Math.abs(a - b) <= 5) return 'dup';
+    if (!sameSlot(other.course, course)) continue;
+    if (weekKey(other.course) === weekKey(course)) return 'dup';
   }
+
+  if (sawSameSlot) return 'replace';
 
   const b1 = timeToMinutes(course.start);
   const b2 = timeToMinutes(course.end);
@@ -1008,7 +1245,8 @@ function detectCongestion(pendingList, totalWeeks) {
 /* ============================================================ 写入 */
 
 function commitImport() {
-  const chosen = pending.filter((x) => x.checked).map((x) => x.course);
+  const chosenItems = pending.filter((x) => x.checked);
+  const chosen = chosenItems.map((x) => x.course);
   if (!chosen.length) {
     deps.notify('没有勾选任何课程');
     return;
@@ -1022,9 +1260,23 @@ function commitImport() {
   }
 
   const existing = store.loadCourses();
-  const added = valid.map((c) => ({ ...c, id: genId() }));
 
-  const next = existing.concat(added);
+  /*
+   * 'replace' 的项：库里同名同时间、但周次不同的旧记录要删掉。
+   * 不删的话会同时存在两条 —— 一条旧周次、一条新周次，
+   * 周视图看起来就像「课莫名其妙多出来」，而且新数据被旧数据盖住。
+   */
+  const replacing = chosenItems
+    .filter((x) => x.status === 'replace')
+    .map((x) => x.course);
+
+  const kept = replacing.length
+    ? existing.filter((ex) => ex.noSlot || !replacing.some((rc) => sameSlot(ex, rc)))
+    : existing;
+  const replacedCount = existing.length - kept.length;
+
+  const added = valid.map((c) => ({ ...c, id: genId() }));
+  const next = kept.concat(added);
   const result = store.save(STORAGE_KEYS.courses, next);
 
   if (!result.ok) {
@@ -1033,7 +1285,9 @@ function commitImport() {
   }
 
   closeOverlay();
-  deps.notify(`已导入 ${added.length} 门课`);
+  deps.notify(replacedCount
+    ? `已导入 ${added.length} 门课，替换了 ${replacedCount} 条旧记录`
+    : `已导入 ${added.length} 门课`);
   deps.onImported(added.length);
 }
 

@@ -73,6 +73,7 @@ export function initSchedule(dependencies) {
   renderDayFilter();
   bindViewSwitch();
   bindWeekNav();
+  bindClearButton();
   renderSchedule();
 }
 
@@ -85,6 +86,12 @@ function bindViewSwitch() {
       renderSchedule();
     });
   });
+}
+
+/** 列表页底部的「清空全部课程」按钮 */
+function bindClearButton() {
+  // 确认和撤销都在 clearAllCourses 里统一处理，这里只负责触发
+  $('#clearCoursesBtn')?.addEventListener('click', () => clearAllCourses());
 }
 
 function bindWeekNav() {
@@ -443,6 +450,58 @@ function deleteCourse(course) {
       }
     },
     // revert：撤销 —— 数据从未被删，只需把界面恢复
+    () => {
+      courses = previousList;
+      renderSchedule();
+      checkReminder();
+    },
+  );
+}
+
+/**
+ * 一键清空所有课程（带 5 秒撤销）。
+ *
+ * 使用场景：导入弄错了、课表换了、换学期了。
+ *
+ * 只清课程，**不会动饮食记录和日记** —— 这也是它和
+ * 设置页那个「清空所有记录」的区别。
+ *
+ * 和删除单门课一样走「先改界面 + 延迟提交」：
+ * 真正落库在 5 秒后，所以就算中途关掉页面，课程也还在。
+ */
+export function clearAllCourses() {
+  const count = courses.length;
+  if (!count) {
+    deps.notify('现在没有任何课程，不用清空');
+    return;
+  }
+
+  // 破坏性操作，先问一句；问完还有 5 秒撤销兜底
+  const ok = window.confirm(
+    `确定清空全部 ${count} 门课程吗？\n\n`
+    + '饮食记录和日记不会被删除。\n'
+    + '点确定后，5 秒内还能点「撤销」找回来。',
+  );
+  if (!ok) return;
+
+  const previousList = courses.slice();
+  courses = [];
+  renderSchedule();
+  checkReminder();
+
+  deps.scheduleUndo(
+    `已清空 ${count} 门课程`,
+    // commit：5 秒后才真正写入存储
+    () => {
+      const result = store.save(STORAGE_KEYS.courses, courses);
+      if (!result.ok) {
+        courses = previousList;
+        renderSchedule();
+        checkReminder();
+        deps.notify('清空没有保存成功，课程已恢复');
+      }
+    },
+    // revert：撤销 —— 数据还没落库，把界面恢复就行
     () => {
       courses = previousList;
       renderSchedule();

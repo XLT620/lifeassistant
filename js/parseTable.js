@@ -486,6 +486,63 @@ export function parseEduCell(raw) {
   return out;
 }
 
+/**
+ * 去掉混进字段里的「备注元数据」。
+ *
+ * 复杂课表一格里有十几个 键:值（教学班、人数、考核方式、周学时…），
+ * 真正和课表有关的只有：课程名 / 节次 / 周次 / 校区 / 场地 / 教师 / 学分 / 学时。
+ * 万一某个字段没切干净，这里在第一个元数据键处截断。
+ */
+const META_KEYS = /(教学班组成|教学班|课程性质简介|教学班人数|选课人数|考核方式|选课备注|周学时|总学时|学分|职称|校区|场地|教师)\s*[:：]/;
+
+function stripMeta(text) {
+  const s = String(text || '');
+  const m = s.match(META_KEYS);
+  return (m && typeof m.index === 'number' ? s.slice(0, m.index) : s).trim();
+}
+
+/** 课程名结尾常见的符号（◆◇●○ 表示理论/实验/上机等），显示时去掉 */
+function cleanCourseName(raw) {
+  return stripMeta(raw)
+    .replace(/[\s◆◇●○■□▲△★☆◉◎※*]+$/g, '')
+    .trim();
+}
+
+/**
+ * 教务系统导出格式二：`键:值` 表示法（临床医学那种）。
+ *
+ *   计算机基础与人工智能应用◆(1-4节)3-18周/校区:紫霄校区/场地:东3楼401/
+ *   教师:郑强/职称:讲师/教学班:…/教学班组成:临床267/临床268/
+ *   课程性质简介:必修/…/周学时:4/总学时:32/学分:2.0
+ *
+ * ⚠️ 不能按 "/" 切字段：`教学班组成:临床267/临床268` 的值里自带 "/"。
+ *    正确做法是**找每个「键:」的位置**，值从冒号后一直到下一个键之前。
+ */
+const KEY_FIELDS = [
+  '校区', '场地', '教师', '职称',
+  '教学班组成', '教学班', '课程性质简介',
+  '教学班人数', '选课人数', '考核方式', '选课备注',
+  '周学时', '总学时', '学分',
+];
+
+function readKeyValues(line) {
+  const re = new RegExp(`(${KEY_FIELDS.join('|')})\\s*[:：]`, 'g');
+  const hits = [];
+  let m = re.exec(line);
+  while (m !== null) {
+    hits.push({ key: m[1], start: m.index, valueStart: re.lastIndex });
+    m = re.exec(line);
+  }
+
+  const out = {};
+  hits.forEach((h, i) => {
+    const end = i + 1 < hits.length ? hits[i + 1].start : line.length;
+    const value = line.slice(h.valueStart, end).replace(/[\/\s]+$/, '').trim();
+    if (!(h.key in out)) out[h.key] = value;
+  });
+  return out;
+}
+
 /** 解析一行「课程名/(1-2节)3-8周/校区地点/教师/学分/学时」 */
 function parseEduLine(line) {
   // 1. 节次：必须是「(数字-数字节)」才算这种格式
@@ -496,8 +553,8 @@ function parseEduLine(line) {
   const endPeriod = Number(pm[2]);
   if (!(startPeriod >= 1 && endPeriod >= startPeriod && endPeriod <= 20)) return null;
 
-  // 2. 课程名 = 节次括号之前的部分（去掉结尾的 / 和空白）
-  const name = line.slice(0, pm.index).replace(/[\/\s]+$/, '').trim();
+  // 2. 课程名 = 节次括号之前的部分（去掉结尾的 / 空白 和 ◆◇ 这类符号）
+  const name = cleanCourseName(line.slice(0, pm.index).replace(/[\/\s]+$/, ''));
   if (!name) return null;
 
   // 3. 节次之后是「周次…」，一直到下一个 "/" 或「XX校区」
@@ -521,6 +578,25 @@ function parseEduLine(line) {
     const after = rest.slice(weekEnd);
     const firstSlash = after.indexOf('/');
     tailInline = (firstSlash >= 0 ? after.slice(0, firstSlash) : after).trim();
+  }
+
+  /*
+   * ---- 格式二：`键:值`（临床医学那种导出）----
+   * 这种格式不能用 "/" 切字段（值里自带 "/"），直接按键取。
+   */
+  if (/校区\s*[:：]|场地\s*[:：]|教师\s*[:：]/.test(line)) {
+    const kv = readKeyValues(line);
+    return {
+      name,
+      teacher: stripMeta(kv['教师'] || ''),
+      room: stripMeta(kv['场地'] || ''),
+      campus: stripMeta(kv['校区'] || ''),
+      startPeriod,
+      endPeriod,
+      weeks,
+      credit: kv['学分'] || '',
+      hours: kv['总学时'] || '',
+    };
   }
 
   // 4. 剩下的字段按 "/" 拆
@@ -599,8 +675,8 @@ function parseEduLine(line) {
 
   return {
     name,
-    teacher: String(teacher || '').trim(),
-    room: String(room || '').trim(),
+    teacher: stripMeta(teacher),
+    room: stripMeta(room),
     campus,
     startPeriod,
     endPeriod,

@@ -25,29 +25,33 @@
    ========================================================================== */
 
 import { el, clear, timeToMinutes } from './utils.js';
-import { WEEKDAY_NAMES, WEEKDAY_SHORT, PERIOD_TIMES } from './constants.js';
+import {
+  WEEKDAY_NAMES, WEEKDAY_SHORT, PERIOD_TIMES, findPalette,
+} from './constants.js';
 import { isCourseInWeek } from './parseTable.js';
 
 /* ---------------------------------------------------------------- 配色 */
 
-const PALETTE = [
-  { bg: '#4A7C6F', text: '#FFFFFF' },
-  { bg: '#5B8FC7', text: '#FFFFFF' },
-  { bg: '#8C6BB1', text: '#FFFFFF' },
-  { bg: '#C77F5B', text: '#FFFFFF' },
-  { bg: '#4A9E8F', text: '#FFFFFF' },
-  { bg: '#C75B7A', text: '#FFFFFF' },
-  { bg: '#B8934A', text: '#FFFFFF' },
-  { bg: '#6B8E5B', text: '#FFFFFF' },
-];
+/**
+ * 当前该用哪套颜色。
+ * 用户在「设置 → 课表配色」里选，存在 settings.coursePalette。
+ */
+function paletteColors(settings = {}) {
+  return findPalette(settings.coursePalette).colors;
+}
 
-function colorFor(name) {
+/**
+ * 按课程名取色：同一门课永远同一个颜色。
+ * 用字符串哈希，不依赖课程顺序 —— 增删课不会让其他课集体变色。
+ */
+function colorFor(name, colors) {
+  const list = colors && colors.length ? colors : findPalette().colors;
   let hash = 0;
   const s = String(name || '');
   for (let i = 0; i < s.length; i += 1) {
     hash = (hash * 31 + s.charCodeAt(i)) % 100000;
   }
-  return PALETTE[hash % PALETTE.length];
+  return list[hash % list.length];
 }
 
 /* ---------------------------------------------------------------- 时间轴 */
@@ -414,6 +418,8 @@ export function renderWeekGrid(root, opts) {
   const start = resolveTimetableStart(settings);
   // 用户/AI 提供的真实作息表（各校第 1 节时间不同），没有就用内置默认
   const periodTimes = getPeriodTimes(settings);
+  // 用户在「课表配色」里选的方案
+  const palette = paletteColors(settings);
 
   /*
    * 周次换算：课程的 weeks（3-8、13-16）是**课表周次**，
@@ -604,7 +610,7 @@ export function renderWeekGrid(root, opts) {
 
     const dayIdx = Number(course.day);
     const colIndex = (dayIdx + 6) % 7;    // 周一 → 0，周日 → 6
-    const color = colorFor(course.name);
+    const color = colorFor(course.name, palette);
 
     // 一列宽 = 100/7 %；并排时再切成 laneCount 份
     const colWidth = 100 / 7;
@@ -659,12 +665,22 @@ export function renderWeekGrid(root, opts) {
   root.appendChild(body);
 
   /* ---------------- 重叠提示 ---------------- */
-  const overlapping = items.filter((it) => (it.laneCount || 1) > 1).length;
-  if (overlapping > 0) {
+  /*
+   * 只有「不同课程」撞在同一时间才值得提醒。
+   * 同一门课的两条（理论 ◆ / 实验 ◇，教师或教室不同）本来就同时上，
+   * 那是正常的，不该报警 —— 否则用户会以为导入错了。
+   */
+  const stacked = items.filter((it) => (it.laneCount || 1) > 1);
+  const realOverlap = stacked.filter((it) => stacked.some((other) => other !== it
+    && other.course.day === it.course.day
+    && other.mins.start === it.mins.start
+    && other.course.name !== it.course.name));
+
+  if (realOverlap.length > 0) {
     root.appendChild(el('div', { class: 'wk-congestion' }, [
       el('span', { text: '⚠' }),
       el('span', {
-        text: `${overlapping} 门课和其他课时间重叠，已并排显示。`
+        text: `${realOverlap.length} 门课和其他课时间重叠，已并排显示。`
           + '如果这不对（比如所有课都挤在周一），说明导入时星期/节次没读对，'
           + '点右上角「导入」重新核对。',
       }),

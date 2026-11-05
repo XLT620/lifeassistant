@@ -18,7 +18,9 @@ import {
 } from './utils.js';
 import { THEME_KEY } from './constants.js';
 import * as store from './store.js';
-import { initSchedule, renderSchedule, reloadCourses, checkReminder } from './schedule.js';
+import {
+  initSchedule, renderSchedule, reloadCourses, checkReminder, clearAllCourses,
+} from './schedule.js';
 import { initDiet, renderDiet, renderWeekly, getDietViewMode } from './diet.js';
 import { initJournal, renderJournal } from './journal.js';
 import { initSettings, openSettings } from './settings.js';
@@ -370,6 +372,8 @@ function boot() {
       onImported: () => {
         reloadCourses();
       },
+      // 导入面板里的「清空全部课程」：交给课程表模块（带确认 + 5 秒撤销）
+      onClearAll: () => clearAllCourses(),
     });
     // 设置模块：改动设置后要通知各页面刷新（比如换了热量目标，饮食页要重算）
     initSettings({
@@ -379,10 +383,10 @@ function boot() {
         if (activeTab === 'diet') {
           if (getDietViewMode() === 'weekly') renderWeekly();
           else renderDiet();
-        } else if (activeTab === 'schedule') {
-          // 学期设置改了（开学日期 / 总周数）会直接影响周视图
-          reloadCourses();
         }
+        // 课程表也要重画：学期设置（日期/总周数）和「课表配色」都会影响周视图，
+        // 而用户此刻正停在设置页，不重画的话回去看还是旧颜色。
+        reloadCourses();
       },
     });
   } catch (err) {

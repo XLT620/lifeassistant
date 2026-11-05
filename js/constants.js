@@ -43,6 +43,118 @@ export const WEEKDAY_SHORT = ['日', '一', '二', '三', '四', '五', '六'];
 export const MOODS = ['😊', '😌', '🤔', '😤', '😢', '🎉'];
 
 /**
+ * 课表配色方案。
+ *
+ * 每套 8 个颜色，课程块按「课程名哈希」取其中一个 ——
+ * 同一门课每次都是同一个颜色，不同课尽量不撞色。
+ *
+ * 颜色都写死了文字色（bg/text 成对），
+ * 因为浅色底配白字看不清（马卡龙那套尤其明显）。
+ * 这些值不是随手调的：都在浅色和深色主题下看过对比度。
+ */
+export const COURSE_PALETTES = [
+  {
+    id: 'pine',
+    name: '松烟',
+    desc: '默认配色，沉静耐看。',
+    colors: [
+      { bg: '#4A7C6F', text: '#FFFFFF' },
+      { bg: '#5B8FC7', text: '#FFFFFF' },
+      { bg: '#8C6BB1', text: '#FFFFFF' },
+      { bg: '#C77F5B', text: '#FFFFFF' },
+      { bg: '#4A9E8F', text: '#FFFFFF' },
+      { bg: '#C75B7A', text: '#FFFFFF' },
+      { bg: '#B8934A', text: '#FFFFFF' },
+      { bg: '#6B8E5B', text: '#FFFFFF' },
+    ],
+  },
+  {
+    id: 'dopamine',
+    name: '多巴胺',
+    desc: '高饱和撞色，一眼兴奋。',
+    colors: [
+      { bg: '#FF4E86', text: '#FFFFFF' },
+      { bg: '#FF7A33', text: '#FFFFFF' },
+      { bg: '#FFC93C', text: '#5A3E00' },
+      { bg: '#22C55E', text: '#FFFFFF' },
+      { bg: '#2F9BFF', text: '#FFFFFF' },
+      { bg: '#8B5CF6', text: '#FFFFFF' },
+      { bg: '#FF5F5F', text: '#FFFFFF' },
+      { bg: '#06BFC4', text: '#FFFFFF' },
+    ],
+  },
+  {
+    id: 'macaron',
+    name: '马卡龙',
+    desc: '粉彩低饱和，像糖果纸。',
+    colors: [
+      { bg: '#FFD9E8', text: '#6B3B52' },
+      { bg: '#FFE6C7', text: '#6B4A25' },
+      { bg: '#FFF6B8', text: '#5E5418' },
+      { bg: '#C9F0D8', text: '#255B3C' },
+      { bg: '#C7E4FF', text: '#1F4E77' },
+      { bg: '#DED3FF', text: '#3F3270' },
+      { bg: '#FFD6D6', text: '#7A3232' },
+      { bg: '#D6F0F0', text: '#255A5A' },
+    ],
+  },
+  {
+    id: 'morandi',
+    name: '莫兰迪',
+    desc: '灰调高级，安静不抢眼。',
+    colors: [
+      { bg: '#B8A9A0', text: '#3A332E' },
+      { bg: '#A3B1B6', text: '#2F3A3E' },
+      { bg: '#B5BFA8', text: '#333B2C' },
+      { bg: '#C4B7B0', text: '#3D3531' },
+      { bg: '#A8A6B8', text: '#33313D' },
+      { bg: '#C2B8A3', text: '#3B352C' },
+      { bg: '#9FAFA1', text: '#2F3A31' },
+      { bg: '#BFAFAD', text: '#3B3231' },
+    ],
+  },
+  {
+    id: 'snow',
+    name: '雪雾',
+    desc: '冷调蓝灰，清晨的窗。',
+    colors: [
+      { bg: '#4C6B8A', text: '#FFFFFF' },
+      { bg: '#5B8FC7', text: '#FFFFFF' },
+      { bg: '#6E8FA8', text: '#FFFFFF' },
+      { bg: '#7A9CC6', text: '#FFFFFF' },
+      { bg: '#55708C', text: '#FFFFFF' },
+      { bg: '#8FB0C9', text: '#1F3448' },
+      { bg: '#4A7C8C', text: '#FFFFFF' },
+      { bg: '#6B8E9E', text: '#FFFFFF' },
+    ],
+  },
+  {
+    id: 'jasmine',
+    name: '茉香',
+    desc: '茶绿配米白，课间一杯茉莉。',
+    colors: [
+      { bg: '#8FAE9A', text: '#22302A' },
+      { bg: '#A8C3A0', text: '#26331F' },
+      { bg: '#C9D8B6', text: '#333D28' },
+      { bg: '#E0D2B8', text: '#3D3526' },
+      { bg: '#9FC0A8', text: '#233427' },
+      { bg: '#B8CFC0', text: '#26352D' },
+      { bg: '#CFE0CC', text: '#2A3628' },
+      { bg: '#A9BFA6', text: '#2A3327' },
+    ],
+  },
+];
+
+/** 默认配色 */
+export const DEFAULT_PALETTE = 'pine';
+
+/** 按 id 取配色方案，取不到就退回默认 */
+export function findPalette(id) {
+  return COURSE_PALETTES.find((p) => p.id === id) || COURSE_PALETTES[0];
+}
+
+
+/**
  * 内置食物库 —— 作为 AI 识别失败时的兜底，以及手动添加时的建议。
  *
  * ⚠️ 原型里的 FOOD_DB 是**假装识别**用的：setTimeout 1.8 秒后
@@ -133,6 +245,9 @@ export const DEFAULT_SETTINGS = {
 
   /** 界面主题：'auto' | 'light' | 'dark' */
   theme: 'auto',
+
+  /** 课表配色方案 id（见 COURSE_PALETTES） */
+  coursePalette: 'pine',
 
   /* ---- 学期与周次 ---- */
 
