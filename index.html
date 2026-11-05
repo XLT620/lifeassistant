@@ -180,43 +180,42 @@
         </div>
 
         <!--
-          没设置日期时，这里直接让你填，不用翻到设置页。
-
-          两个日期的区别（用户明确要求）：
-            · 开学日期：它所在的那一周算**第 1 周**（开学日可以是周三、周六）
-            · 课表第一周的周一：课表实际开始上课的那一周
-          两者可能不是同一周（中间夹军训）。
+          没填全日期时，这里直接让你填，不用翻到设置页。
+          两个日期都是用户自己填的 —— 不自动填，因为「课表页脚写的正式上课日期」
+          并不等于「开学日期」，自动套用会导致开学前那几周冒出课来。
         -->
         <div class="week-setup" id="weekSetup" hidden>
-          <div class="week-setup-title">📅 先告诉我开学日期</div>
+          <div class="week-setup-title">📅 请填两个日期</div>
           <div class="week-setup-desc">
-            开学日期所在的那一周，算作<b>第 1 周</b>。
-            教务处的开学日期和课表实际开始上课的那一周，可能不是同一周。
+            它们决定「第几周」怎么算、以及什么时候开始有课。
           </div>
 
           <div class="week-setup-row">
-            <label class="week-setup-label" for="weekSetupTermDate">开学日期</label>
+            <label class="week-setup-label" for="weekSetupTermDate">
+              ① 开学日期
+            </label>
             <input type="date" class="form-input" id="weekSetupTermDate"
                    aria-label="开学日期">
           </div>
+          <div class="week-setup-note">这一天所在的周（周一~周日）就是<b>第 1 周</b>。</div>
 
           <div class="week-setup-row">
             <label class="week-setup-label" for="weekSetupDate">
-              课表第一周的周一
-              <span class="week-setup-opt">（可选，没有军训就留空）</span>
+              ② 课表启用日期
             </label>
             <input type="date" class="form-input" id="weekSetupDate"
-                   aria-label="课表第一周的周一">
+                   aria-label="课表启用日期">
           </div>
+          <div class="week-setup-note">在这个日期<b>之前不会显示任何课程</b>（军训/入学教育那种）。</div>
 
           <div class="week-setup-actions">
             <button type="button" class="btn btn-primary btn-sm" id="weekSetupSave">保存</button>
           </div>
 
           <div class="week-setup-hint">
-            例：开学日 9 月 5 日（周六）→ 那周算第 1 周；
-            课表从 9 月 7 日那周开始 → 那是第 2 周。
-            填了两个日期后，周次下面会同时显示「课表第几周」。
+            例：9 月 5 日（周六）开学 → 8/31–9/6 那周是第 1 周；
+            课表从 9 月 7 日（周一）启用 → 第 1 周没有课，第 2 周才是课表第 1 周。
+            两个日期填同一天就表示：开学当周就按课表上课。
           </div>
         </div>
 
