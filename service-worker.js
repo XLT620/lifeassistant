@@ -34,7 +34,7 @@
    改版本号请用文本编辑器（VS Code、记事本都行）。
    ========================================================================== */
 
-const CACHE_VERSION = 'v3.8.2';
+const CACHE_VERSION = 'v3.14.4';
 const CACHE_NAME = `lifeassistant-${CACHE_VERSION}`;
 
 /**
@@ -56,6 +56,7 @@ const APP_SHELL = [
   './css/components.css',
   './css/settings.css',
   './css/course.css',
+  './css/glass.css',
 
   './js/app.js',
   './js/constants.js',
